@@ -1,0 +1,698 @@
+#!/usr/bin/env bash
+# k18: a folder of static files becomes a bootable HTTPS server, and gets onto a machine.
+#
+#   k18 pack SITE [-n NAME] [--san NAME]... [-i IP] [-6 IP6] [-c CERTDIR] [-o OUT] [--plain80]
+#                [--hsts SECONDS] [--cache SECONDS] [--header 'Name: value'] [--no-compress]
+#       OUT/os.bin (the image: what a multiboot loader such as GRUB starts) and OUT/disk.img
+#       (the same on a disk that a BIOS starts, and UEFI firmware too). NAME is what the
+#       certificate is for and what port 80 redirects to (a DNS name or an IP address;
+#       default 127.0.0.1). The image asks for its address where it boots (DHCP), so it
+#       runs on any machine whose network gives it one; with -i IP it has that address
+#       and asks nobody. -6 IP6: the IPv6 address the machine has, if the site is to be
+#       reached that way too (that one the image has to be told: a host says which it is).
+#       --san: a further name the certificate is to be good for (www.NAME, say). The server
+#       does not look at the name it is asked for: every name that points at it and is in
+#       its certificate gets the same site.
+#       CERTDIR holds server.key (ECDSA P-256) and server.pem (the chain); if it has
+#       neither, a certificate for NAME under a private CA is made there (OUT/ca.pem is
+#       then what clients must trust). OUT defaults to build-NAME, CERTDIR to cert-NAME.
+#       Files that get shorter by it are packed compressed as well (gzip, brotli), for
+#       clients that say they take that: --no-compress leaves that out (a smaller image).
+#       How it was packed is kept in OUT/pack.conf, for `k18 renew`.
+#   k18 run [OUT] [-p PORT]
+#       Boot OUT/disk.img in QEMU: https://127.0.0.1:8443/ and http://127.0.0.1:9443/
+#       (or PORT and PORT + 1000).
+#   k18 publish SITE HOST -n NAME [--san NAME]... [pack's other options] [--rescue 'COMMAND']
+#               [--boot 'COMMAND'] [--disk DEVICE] [--first] [--if-due] [--days N]
+#               [--email ADDRESS] [--staging]
+#       All of it in one step, with nothing kept here: for a machine that is k18's alone,
+#       from wherever this runs (a workflow that a push starts, say: ci/publish.yml).
+#       The machine is put into its rescue system: a Linux that runs from memory, which
+#       every host has a way to start and which ssh root@HOST then reaches. --rescue is
+#       that way (say 'hcloud server enable-rescue NAME --ssh-key KEY && hcloud server
+#       reset NAME'); it is run unless the machine is there already. Who the machine is
+#       it says itself: its key and certificate lie at the end of its disk, where the
+#       last publish put them. If there is none, or the certificate ends within N days
+#       (30), lacks a name or is one nobody believes (a private CA's, the test server's),
+#       a new key is made here and Let's Encrypt is asked for a certificate for it
+#       (certbot answers the challenge on port 80 of the rescue system; the names must
+#       point at the machine). Then SITE is packed, the image written over the whole
+#       disk, and the machine started from it: --boot is what does that where saying
+#       "reboot" in the rescue system does not. A minute or two without a server.
+#       --disk names the disk if the machine has several.
+#       Before anything is sent to it, the machine has to show that it is itself: with
+#       the key on its disk it must be able to sign for the certificate the site showed
+#       a moment earlier. If the site shows none, the machine is not touched; if what
+#       answers in the rescue system cannot show it, it is sent nothing and started as it
+#       was. --first: nothing vouches for the machine yet (its first image; the site is
+#       down; it is in its rescue system already). --if-due: do nothing, and touch
+#       nothing, while the site is up with a certificate that is good for the names and
+#       for more than N days: for a daily run.
+#   k18 deploy HOST [OUT] [--rescue 'COMMAND'] [--boot 'COMMAND'] [--disk DEVICE] [--first]
+#       The same last steps for an image packed here (k18 pack): OUT/disk.img over the
+#       machine's whole disk, its key and certificate behind it, and the machine started.
+#       Here the machine shows that it is itself by having the key that goes with OUT
+#       (it is then sent nothing it has not got); --first for an image with another key.
+#   k18 deploy HOST [OUT] --grub [--persist] [--reset 'COMMAND']
+#       For a server that keeps its Linux: OUT/os.bin goes beside it, and GRUB starts it
+#       (ssh root@HOST reaches the Linux). Without --persist a later reset of the server
+#       starts Linux again. With it, Linux, whenever it comes up, waits a minute for
+#       somebody to say "hold" (which this command does when it needs the machine) and
+#       then starts k18: so k18 survives a reset, and the way back in is a reset. If k18
+#       is running there now, --reset says how to reset the server ('hcloud server reset
+#       NAME').
+#   k18 renew HOST [OUT] [--rescue 'COMMAND' [--boot 'COMMAND'] [--disk DEVICE] [--first] | --grub --reset 'COMMAND']
+#                [--days N] [--force] [--dry-run] [--email ADDRESS] [--staging]
+#       A new certificate from Let's Encrypt for the names OUT was packed for (which must
+#       point at the server), if the one in its CERTDIR ends within N days (30); else
+#       nothing happens, and nothing is touched: so this can run from cron every day.
+#       --force gets one whatever the old one says (the first time, when the old one is
+#       from the private CA). When it is time: a new key and a request for a certificate
+#       are made here; the machine goes into its rescue system (or, with --grub, is reset
+#       into its Linux), where certbot answers Let's Encrypt's challenge on port 80 for
+#       that request; the certificate comes back; OUT is packed again as it was packed
+#       before, with the new key and certificate, and started as `k18 deploy` does. A
+#       minute or two without a server. If no certificate comes, the image as it was is
+#       started again. --dry-run stops before the server is touched and says what would
+#       be asked for.
+#
+# The image holds the private key: OUT and CERTDIR are secrets, and are made for their
+# owner's eyes only; so is the machine's disk (and /boot/k18.bin on a server with Linux).
+set -euo pipefail
+umask 077
+HERE=$PWD
+cd "$(dirname "$0")"
+die() { echo "k18: $*" >&2; exit 1; }
+SSHO=(-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o ForwardAgent=no)
+# (paths are the caller's, not this folder's; make can't have blanks in them)
+abs() {
+  local p=$1
+  [[ $p == /* ]] || p=$HERE/$p
+  [[ $p == *[[:space:]]* ]] && die "a path with a blank in it: '$p'"
+  printf '%s\n' "$p"
+}
+isip() { [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ || $1 == *:* ]]; }
+at() { if [[ $1 == *:* ]]; then echo "[$1]"; else echo "$1"; fi; }    # (an IPv6 address, where a port follows it, or in a URL)
+# (--email: it becomes part of a command on the far side, so nothing in it that a shell reads)
+mailok() { [[ $1 =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || die "an address like '$1'?"; }
+
+# lacks CERT NAME...: of these names, the ones the certificate CERT is not good for
+lacks() {
+  local c=$1 n how
+  shift
+  for n in "$@"; do
+    how=-checkhost
+    isip "$n" && how=-checkip
+    openssl x509 $how "$n" -noout -in "$c" 2>/dev/null | grep -q "does match" || printf '%s ' "$n"
+  done
+}
+# proves KEY CERT: the private key in KEY makes a signature that the key CERT is about
+# accepts. So KEY is that key, and not something with its fingerprint: a certificate where
+# a key should be, or a key file with another key's public half pasted in, would both
+# pass for it if all that was compared were what `openssl pkey -pubout` prints.
+proves() {
+  local n
+  n=$(mktemp "$WORK/n.XXXXXX") || return 1
+  head -c 32 /dev/urandom > "$n" &&
+    openssl dgst -sha256 -sign "$1" -out "$n.sig" "$n" 2>/dev/null &&
+    openssl x509 -pubkey -noout -in "$2" > "$n.pub" 2>/dev/null &&
+    openssl dgst -sha256 -verify "$n.pub" -signature "$n.sig" "$n" >/dev/null 2>&1
+}
+# trusted CHAIN: a certificate authority that this machine believes stands behind the first
+# certificate in CHAIN (by way of the others in it)
+trusted() { openssl verify -untrusted "$1" "$1" >/dev/null 2>&1; }
+
+# build SITE NAME IP CERT OUT P80 HSTS CACHE HEADERS SANS COMPRESS IP6: make the image, and note how
+# (how the site is packed goes to make in the environment, which make hands on as it is:
+# a header may have quotes and dollar signs in it, and they are the header's)
+build() {
+  P80="$6" HSTS="$7" CACHE="$8" HEADERS="$9" COMPRESS="${11:-1}" \
+    make -s B="$5" SITE="$1" CERT="$4" NAME="$2" SAN="${10}" IP="$3" IP6="${12:-}" >/dev/null || return 1
+  printf 'site=%q\nname=%q\nip=%q\ncert=%q\np80=%q\nhsts=%q\ncache=%q\nheaders=%q\nsans=%q\ncompress=%q\nip6=%q\n' \
+    "$1" "$2" "$3" "$4" "$6" "$7" "$8" "$9" "${10}" "${11:-1}" "${12:-}" > "$5/pack.conf"
+  chmod -R go= "$5" "$4"
+  local total site_bytes name
+  total=$(stat -c %s "$5/os.bin")
+  site_bytes=$(stat -c %s "$5/site.bin")
+  name=$(cat "$5/name")
+  echo "$5/os.bin: $total bytes ($((total - site_bytes)) of system, $site_bytes of site), for https://$name/ on ${3:-the address it is given where it boots (DHCP)}${12:+ and ${12}}"
+  if [[ -s $5/ca.pem ]]; then
+    echo "its certificate is under a private CA: clients need $5/ca.pem (curl --cacert $5/ca.pem)"
+  fi
+  # (what anybody can make again from the source, the certificate and the site: tools/repro.sh)
+  echo "without its key: sha256 $(sed -n 's/^  the image .*: //p' "$5/made") (the system alone: $(sed -n 's/^  the system .*: //p' "$5/made"); $5/made says how it was made)"
+  # shellcheck disable=SC2086
+  local no
+  no=$(lacks "$4/server.pem" "$2" ${10})
+  if [[ -n $no ]]; then
+    echo "k18: the certificate in $4 is not for: $no" >&2
+    if [[ -s $5/ca.pem ]]; then
+      echo "    (it is the private CA's: take $4 away and pack again for a new one)" >&2
+    else
+      echo "    (k18 renew --force gets one for all of: $2 ${10})" >&2
+    fi
+  fi
+}
+
+# What pack and publish are told about the image: the options, into these (the caller's)
+packopt() {
+  case $1 in
+    -n) name=$2; return 2;; -i) ip=$2; return 2;; -6) ip6=$2; return 2;; --plain80) p80=page; return 1;;
+    --hsts) hsts=$2; return 2;; --cache) cache=$2; return 2;;
+    --header) headers+="$2;;"; return 2;; --no-compress) compress=0; return 1;;
+    --san) [[ $2 == *[[:space:],]* || -z $2 ]] && die "--san takes one name"; sans+="${sans:+ }$2"; return 2;;
+  esac
+  return 0
+}
+
+pack() {
+  local site=${1:-} name=127.0.0.1 ip= ip6= cert= out= p80=redirect hsts= cache=600 headers= sans= compress=1 n
+  [[ -n $site ]] || die "pack: which folder?"
+  site=$(abs "$site")
+  [[ -d $site ]] || die "pack: no such folder: '$site'"
+  shift
+  while (($#)); do
+    packopt "$@" && n=0 || n=$?
+    if ((n)); then shift $n; continue; fi
+    case $1 in
+      -c) cert=$2; shift 2;; -o) out=$2; shift 2;;
+      *) die "pack: what is '$1'?";;
+    esac
+  done
+  out=$(abs "${out:-build-$name}")
+  cert=$(abs "${cert:-cert-$name}")
+  build "$site" "$name" "$ip" "$cert" "$out" "$p80" "$hsts" "$cache" "$headers" "$sans" "$compress" "$ip6"
+}
+
+run() {
+  local out=build port=8443
+  while (($#)); do
+    case $1 in
+      -p) port=$2; shift 2;;
+      -*) die "run: what is '$1'?";;
+      *) out=$1; shift;;
+    esac
+  done
+  out=$(abs "$out")
+  [[ -f $out/disk.img ]] || die "run: no $out/disk.img (k18 pack first)"
+  local B=$out PORT=$port HPORT=$((port + 1000)) KVM=1 SMP=2 MEM=256
+  source tools/vm.sh
+  [[ $GUEST == 10.0.2.15 ]] || echo "(this image answers on $GUEST; QEMU's network is made to match)"
+  echo "https://127.0.0.1:$PORT/  http://127.0.0.1:$HPORT/   (Ctrl-C ends it)"
+  local ca=
+  if [[ -s $out/ca.pem ]]; then ca="--cacert $out/ca.pem "; fi
+  echo "curl ${ca}--connect-to $NAME:$PORT:127.0.0.1:$PORT https://$NAME:$PORT/"
+  qemu "$out/disk.img" "$(slirp)"
+}
+
+# up HOST NAME [CA] [SANS]: wait until the server at HOST answers a verified fetch for NAME
+# (verified against CA, if that is said; "nobody": not verified), and say under which of
+# its other names it does too
+up() {
+  local host=$1 name ca=() sans=${4:-} how="a verified fetch" i n
+  name=$(at "$2")
+  [[ -n ${3:-} ]] && ca=(--cacert "$3")
+  # (--staging: its certificates are for trying this out, and believed by nobody)
+  [[ ${3:-} == nobody ]] && ca=(--insecure) how="a fetch that does not check the certificate"
+  for i in $(seq 1 60); do
+    sleep 2
+    if curl -s --max-time 4 "${ca[@]}" --connect-to "$name:443:$(at "$host"):443" -o /dev/null "https://$name/"; then
+      echo "k18 is up: https://$name/ ($how from $host)"
+      for n in $sans; do
+        n=$(at "$n")
+        if curl -s --max-time 4 "${ca[@]}" --connect-to "$n:443:$(at "$host"):443" -o /dev/null "https://$n/"; then
+          echo "          https://$n/ too"
+        else
+          echo "k18: but not as https://$n/: the certificate is not for that name" >&2
+        fi
+      done
+      return 0
+    fi
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------------------
+# A machine that is k18's alone: the image is written over its disk from its rescue system.
+# RSH is how its root is reached from here on (ssh, with the host keys of this run alone:
+# a rescue system has new ones every time. K18_SSH: the tests' machine, tools/hosttest.sh).
+RSH=()
+WORK=
+NEWDIR=
+DISKDEV=
+BOOT=                             # (--boot: what starts the machine from its disk, if `reboot` there does not)
+tmp() {
+  local base=${TMPDIR:-/tmp}
+  [[ -d /dev/shm && -w /dev/shm ]] && base=/dev/shm       # (keys: in memory, where there is such a place)
+  WORK=$(mktemp -d "$base/k18.XXXXXX")
+  trap 'rm -rf "$WORK" ${NEWDIR:+"$NEWDIR"}' EXIT
+}
+# (the disk given, or the machine's only one; nothing of it may be in use: this has to be a
+# rescue system, not the system that lives on that disk. Exit 3: several disks, 4: in use.)
+PROBE='
+d=$1
+if [ -z "$d" ]; then
+  set -- $(lsblk -dnpo NAME,TYPE,RM 2>/dev/null | awk "\$2 == \"disk\" && \$3 == 0 { print \$1 }")
+  [ $# = 1 ] || { echo "$*"; exit 3; }
+  d=$1
+fi
+[ -e "$d" ] || exit 5
+if command -v lsblk >/dev/null 2>&1; then lsblk -nro MOUNTPOINT "$d" | grep -q . && exit 4
+else grep -q "^$d" /proc/mounts /proc/swaps 2>/dev/null && exit 4; fi
+[ "$(id -u)" = 0 ] && echo "$d"
+'
+probe() { "${RSH[@]}" "sh -s -- '$1'" <<<"$PROBE" 2>/dev/null; }
+
+# rescue HOST COMMAND DISK: when this returns, the machine is in its rescue system, RSH
+# reaches it, and DISKDEV is its disk
+rescue() {
+  local host=$1 cmd=$2 want=$3 rc=0 i
+  [[ $want =~ ^[A-Za-z0-9/._-]*$ ]] || die "a disk called '$want'?"
+  RSH=("${K18_SSH:-ssh}" "${SSHO[@]}" -o UserKnownHostsFile="$WORK/known_hosts" "root@$host")
+  DISKDEV=$(probe "$want") || rc=$?
+  for i in $(seq 0 100); do
+    # (what the far side calls its disks goes into commands for it, and onto this screen)
+    [[ $rc == 0 && ! $DISKDEV =~ ^[A-Za-z0-9/._-]+$ ]] && rc=6
+    DISKDEV=${DISKDEV//[^A-Za-z0-9\/._ -]/?}
+    case $rc in
+      0) echo "$host is in its rescue system; its disk is $DISKDEV"; return 0;;
+      3|5|6) ((i == 0)) || boot     # (we took it there: it is started as it was)
+           [[ $rc == 6 ]] && die "$host says its disk is called '$DISKDEV', which no disk is"
+           [[ $rc == 3 && -n $DISKDEV ]] && die "$host has several disks ($DISKDEV): say which is to be k18's with --disk"
+           [[ $rc == 3 ]] && die "the rescue system of $host does not say which disks it has (no lsblk there): say which is to be k18's with --disk"
+           die "$host has no disk $want";;
+    esac
+    if ((i == 0)); then       # nothing answers ssh (k18 is running there, or nothing is), or a Linux that lives on the disk
+      [[ -n $cmd ]] || die "$host is not in its rescue system$([[ $rc == 4 ]] && echo ": a Linux answers there that lives on the disk"). Say how it gets there: --rescue 'COMMAND'$([[ $rc == 4 ]] && echo " (and the disk is then k18's alone; --grub puts k18 beside that Linux)")"
+      echo "putting $host into its rescue system: $cmd"
+      bash -c "$cmd" >/dev/null || die "that did not work: $cmd"
+    fi
+    sleep 3
+    : > "$WORK/known_hosts"
+    rc=0
+    DISKDEV=$(probe "$want") || rc=$?
+  done
+  die "no rescue system answered ssh root@$host within five minutes"
+}
+
+# Who a machine is lies in the last 64 KiB of its disk: a line that says so, then
+# server.key and server.pem as they are, then, if its CA is a private one, "# ca" and
+# ca.pem. idput CERTDIR: there it goes (after it has been read back here). idget DIR: from
+# there into DIR. idsplit DIR: those 64 KiB, on its input, into DIR; fails unless they are
+# a key and the certificate that goes with it (what the far side sends is read as text
+# by awk, and then by openssl: nothing of it is run, and it gets no say in where it goes).
+IDSEEK='$(( $(blockdev --getsize64 "$d") / 65536 - 1 ))'
+idsplit() {
+  mkdir -p "$1"
+  rm -f "$1/server.key" "$1/server.pem" "$1/ca.pem"
+  head -c 65536 | tr -d '\0' |
+    awk -v d="$1" 'NR == 1 { if ($0 != "k18 identity") exit 1; f = d "/server.key"; next }
+      /^# ca$/ { f = d "/ca.pem"; next }
+      /^-----BEGIN CERTIFICATE-----$/ && f == d "/server.key" { f = d "/server.pem" }
+      { print > f }' || return 1
+  [[ -s $1/server.key && -s $1/server.pem ]] && proves "$1/server.key" "$1/server.pem"
+}
+idput() {
+  local f
+  { echo "k18 identity"
+    for f in server.key server.pem; do tr -d '\r' < "$1/$f" || return 1; echo; done
+    if [[ -f $1/ca.pem ]]; then echo "# ca"; tr -d '\r' < "$1/ca.pem"; fi; } > "$WORK/id"
+  (( $(stat -c %s "$WORK/id") <= 65536 )) || { echo "k18: key and certificates take more than the 64 KiB they have on the disk" >&2; return 1; }
+  idsplit "$WORK/idback" < "$WORK/id" || { echo "k18: $1 does not hold a key and the certificate for it" >&2; return 1; }
+  truncate -s 65536 "$WORK/id"
+  "${RSH[@]}" "d='$DISKDEV'; dd of=\"\$d\" bs=65536 seek=$IDSEEK conv=notrunc,fsync 2>/dev/null" < "$WORK/id"
+}
+idget() { "${RSH[@]}" "d='$DISKDEV'; dd if=\"\$d\" bs=65536 skip=$IDSEEK count=1 2>/dev/null" | idsplit "$1"; }
+
+# live HOST NAME FILE [CA]: the certificate the site at HOST shows for NAME now, if a
+# certificate authority that we believe (or CA) stands behind it: into FILE. (Whether its
+# time is over does not matter here: the question is whose key it is about.)
+live() {
+  local host=$1 name=$2 opt=(-servername "$2" -verify_hostname "$2")
+  isip "$name" && opt=(-noservername -verify_ip "$name")
+  [[ -n ${4:-} ]] && opt+=(-CAfile "$4")
+  timeout 10 openssl s_client -connect "$(at "$host"):443" "${opt[@]}" -verify_return_error -no_check_time </dev/null 2>/dev/null |
+    openssl x509 > "$3" 2>/dev/null
+}
+
+# itself HOST FIRST DIR CERT: the machine in its rescue system shows that it is
+# the one we mean. What answers ssh there has host keys nobody has seen, so that says
+# nothing. What does: its disk holds the key of the certificate CERT (the one the site
+# showed a moment ago; or the one we hold for it here), which it shows by signing with
+# it. DIR gets what the disk says the machine is. If it cannot show that, nothing is sent
+# to it, and it is started as it was. FIRST: nothing is asked of it.
+itself() {
+  local host=$1 first=$2 dir=$3 ref=$4 has=
+  idget "$dir" && has=1
+  [[ -z $first ]] || return 0
+  if [[ -n $has && -s $ref ]] && proves "$dir/server.key" "$ref"; then
+    echo "it has the key of the certificate: it is the same machine"
+    return 0
+  fi
+  if [[ -n $has ]]; then echo "k18: the machine that answers at $host does not have the key of the certificate $([[ -s $ref ]] && openssl x509 -noout -subject -enddate -in "$ref" 2>/dev/null | tr '\n' ' ')" >&2
+  else echo "k18: the machine that answers at $host has no key at the end of its disk (its image is from before k18 put one there, or it is not the machine)" >&2; fi
+  echo "    nothing is sent to it, and it is started as it was. (--first, if you know that it is the machine all the same)" >&2
+  boot
+  exit 1
+}
+
+# boot: the machine starts from its disk
+boot() {
+  if [[ -n $BOOT ]]; then bash -c "$BOOT" >/dev/null || die "that did not work: $BOOT"
+  else "${RSH[@]}" 'sync; nohup sh -c "sleep 1; reboot" >/dev/null 2>&1 &' || true; fi
+}
+
+# write HOST OUT CERTDIR: the image over the machine's disk (and nothing else on
+# it), who it is at the disk's end, and the machine started from it
+write() {
+  local host=$1 out=$2 cert=$3 n sum
+  n=$(stat -c %s "$out/disk.img")
+  gzip -c "$out/disk.img" | "${RSH[@]}" "set -e; d='$DISKDEV'
+    [ \$(blockdev --getsize64 \"\$d\") -ge $((n + 65536)) ]
+    blkdiscard -f \"\$d\" 2>/dev/null || dd if=/dev/zero of=\"\$d\" bs=1M count=128 conv=fsync 2>/dev/null
+    gunzip | dd of=\"\$d\" bs=1M conv=notrunc,fsync 2>/dev/null" || die "the image could not be written to $DISKDEV on $host: it is still in its rescue system (if its disk is not what it was, the next time: --first)"
+  idput "$cert" || die "the image is on $DISKDEV on $host, but not what says who the machine is: it is still in its rescue system (the next time: --first)"
+  sum=$("${RSH[@]}" "head -c $n '$DISKDEV' | sha256sum") || sum=
+  [[ ${sum%% *} == $(sha256sum < "$out/disk.img" | cut -d' ' -f1) ]] || die "what is on $DISKDEV on $host now is not the image: it is still in its rescue system (the next time: --first)"
+  echo "written: $n bytes of image over $DISKDEV, and who it is at its end"
+  boot
+}
+
+# certnew CSR CERT EMAIL STAGING: Let's Encrypt's certificate for the request CSR, by way of
+# certbot on the machine RSH reaches (a rescue system, or the server's Linux), into CERT
+certnew() {
+  local contact=--register-unsafely-without-email
+  [[ -n $3 ]] && contact="--email $3"
+  "${RSH[@]}" "set -e
+      d=\$(mktemp -d)
+      trap 'rm -rf \"\$d\"' EXIT
+      cat > \"\$d/csr\"
+      command -v certbot >/dev/null || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot >/dev/null; } </dev/null
+      certbot certonly --standalone --non-interactive --agree-tos $contact $4 --csr \"\$d/csr\" \\
+        --cert-path \"\$d/cert.pem\" --chain-path \"\$d/chain.pem\" --fullchain-path \"\$d/full.pem\" >/dev/null </dev/null
+      cat \"\$d/full.pem\"" < "$1" > "$2"
+}
+# keynew DIR NAME...: a new key (the kind the image signs with: ECDSA on P-256) and a
+# request for a certificate for it and these names, into DIR; says the names as the
+# request has them. Both are made here: only the request goes to the machine.
+keynew() {
+  local dir=$1 san= n subj=/
+  shift
+  for n in "$@"; do
+    if isip "$n"; then san+="${san:+,}IP:$n"; else san+="${san:+,}DNS:$n"; fi
+  done
+  (( ${#1} > 64 )) || subj="/CN=$1"       # (a common name has 64 characters at most; the names that count are the others)
+  openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$dir/server.key" 2>/dev/null || return 1
+  openssl req -new -key "$dir/server.key" -subj "$subj" -addext "subjectAltName=$san" -out "$dir/csr.pem" || return 1
+  echo "$san"
+}
+# came KEY CERT STAGING: CERT is a certificate for KEY that the world believes (or, from
+# Let's Encrypt's test server, that nobody does)
+came() { proves "$1" "$2" && { [[ -n $3 ]] || trusted "$2"; }; }
+
+publish() {
+  local site=${1:-} host=${2:-} name= ip= ip6= p80=redirect hsts= cache=600 headers= sans= compress=1 n
+  local rescuecmd= bootcmd= disk= first= ifdue= days=30 email= staging=
+  [[ -n $site && $site != -* ]] || die "publish: which folder?"
+  [[ -n $host && $host != -* ]] || die "publish: which host?"
+  site=$(abs "$site")
+  [[ -d $site ]] || die "publish: no such folder: '$site'"
+  shift 2
+  while (($#)); do
+    packopt "$@" && n=0 || n=$?
+    if ((n)); then shift $n; continue; fi
+    case $1 in
+      --rescue) rescuecmd=$2; shift 2;; --boot) bootcmd=$2 BOOT=$2; shift 2;; --disk) disk=$2; shift 2;;
+      --first) first=1; shift;; --if-due) ifdue=1; shift;; --days) days=$2; shift 2;;
+      --email) mailok "$2"; email=$2; shift 2;; --staging) staging=--staging; shift;;
+      *) die "publish: what is '$1'?";;
+    esac
+  done
+  [[ -n $name ]] || die "publish: for which name? (-n NAME)"
+  tmp
+  local cert=$WORK/cert out=$WORK/build no san i
+  # What the site shows now: the last look at it before the machine leaves, and what the
+  # machine will be held to. (Three tries: a moment's silence is no reason to take a
+  # machine for a new one.)
+  for i in 1 2 3; do
+    live "$host" "$name" "$WORK/live.pem" && break
+    rm -f "$WORK/live.pem"
+    [[ -n $first || $i == 3 ]] || sleep 3
+    [[ -z $first ]] || break
+  done
+  if [[ -s $WORK/live.pem ]]; then
+    # shellcheck disable=SC2086
+    no=$(lacks "$WORK/live.pem" "$name" $sans)
+    if [[ -n $ifdue && -z $no ]] && openssl x509 -checkend $((days * 86400)) -noout -in "$WORK/live.pem" >/dev/null; then
+      echo "https://$name/ is up, and its certificate is good until $(openssl x509 -enddate -noout -in "$WORK/live.pem" | cut -d= -f2): nothing to do"
+      return 0
+    fi
+  elif [[ -z $first ]]; then
+    die "https://$name/ on $host shows no certificate that can be checked, so nothing would vouch for the machine once it is in its rescue system: it is left as it is. (--first, if this is its first image, or if it is in its rescue system already)"
+  fi
+  # A new key and a request for its certificate, should they be needed: made before the
+  # machine is touched, so that what can go wrong with them goes wrong now
+  mkdir -p "$WORK/new"
+  # shellcheck disable=SC2086
+  san=$(keynew "$WORK/new" "$name" $sans) || die "no request for a certificate could be made for: $name $sans"
+  rescue "$host" "$rescuecmd" "$disk"
+  itself "$host" "$first" "$cert" "$WORK/live.pem"
+  # A new certificate, if the machine has none, or one that ends soon or lacks a name, or
+  # one that nobody believes: a private CA's or the test server's, which an earlier image
+  # left on the disk (--first lets such a machine in; with --staging that is what is asked for)
+  # shellcheck disable=SC2086
+  if [[ ! -s $cert/server.pem ]] || ! openssl x509 -checkend $((days * 86400)) -noout -in "$cert/server.pem" >/dev/null ||
+     [[ -n $(lacks "$cert/server.pem" "$name" $sans) ]] || { [[ -z $staging ]] && ! trusted "$cert/server.pem"; }; then
+    echo "asking Let's Encrypt for a certificate for $san, with a new key"
+    if ! certnew "$WORK/new/csr.pem" "$WORK/new/server.pem" "$email" "$staging" ||
+       ! came "$WORK/new/server.key" "$WORK/new/server.pem" "$staging"; then
+      echo "k18: no certificate came for $name: starting the machine as it was" >&2
+      boot
+      exit 1
+    fi
+    rm -rf "$cert"
+    mkdir -p "$cert"
+    mv "$WORK/new/server.key" "$WORK/new/server.pem" "$cert/"
+    echo "a new certificate, good until $(openssl x509 -enddate -noout -in "$cert/server.pem" | cut -d= -f2)"
+  fi
+  if ! build "$site" "$name" "$ip" "$cert" "$out" "$p80" "$hsts" "$cache" "$headers" "$sans" "$compress" "$ip6"; then
+    echo "k18: the site could not be packed: starting the machine as it was" >&2
+    boot
+    exit 1
+  fi
+  write "$host" "$out" "$cert"
+  up "$host" "$(cat "$out/name")" "${staging:+nobody}" "$sans" ||
+    die "the server did not answer https://$name/ within two minutes"
+}
+
+# ---------------------------------------------------------------------------------------
+# A server that keeps its Linux: the image goes beside it, and GRUB starts it.
+# linux HOST RESET: make sure Linux is running there and stays (a "hold" for the chain into
+# k18, if that is installed); if ssh does not answer, RESET is run first. (A server that
+# does answer and will not have us, or that has other host keys than the ones we know for
+# its address, is not one to reset: it is a Linux that is running.)
+linux() {
+  local host=$1 reset=$2 why
+  RSH=(ssh "${SSHO[@]}" "root@$host")
+  if ! why=$("${RSH[@]}" 'touch /run/k18.hold' 2>&1); then
+    case $why in *"verification failed"*|*"Permission denied"*)
+      die "ssh root@$host answers, but not to us: ${why##*$'\n'} (ssh root@$host has to work first)";;
+    esac
+    [[ -n $reset ]] || die "ssh root@$host does not answer. If k18 is running there, say how to reset the server: --reset 'COMMAND'"
+    echo "resetting the server: $reset"
+    bash -c "$reset" >/dev/null
+    local i
+    for i in $(seq 1 60); do
+      sleep 3
+      "${RSH[@]}" 'touch /run/k18.hold' 2>/dev/null && break
+      [[ $i == 60 ]] && die "Linux did not come up on $host within three minutes"
+    done
+  fi
+  echo "Linux is up on $host, and held"
+}
+
+# start HOST OUT PERSIST [nobody]: the image goes to /boot/k18.bin (for root's eyes only: it
+# holds the key), GRUB gets its entry, and the server boots into it. PERSIST: 1 (Linux
+# starts k18 whenever it comes up), 0 (it does not), keep (as it is there now). nobody:
+# its certificate is the test server's, and the fetch at the end is not a verified one.
+# (GRUB names a file by its place in its file system: where /boot is one of its own, the
+# image is /k18.bin there.)
+start() {
+  local host=$1 out=$2 persist=$3
+  "${RSH[@]}" 'umask 077 && rm -f /boot/k18.bin.new && cat > /boot/k18.bin.new && chmod 600 /boot/k18.bin.new && mv /boot/k18.bin.new /boot/k18.bin' < "$out/os.bin"
+  "${RSH[@]}" "PERSIST=$persist bash -s" <<'EOF'
+set -e
+if ! grep -q 'menuentry "k18"' /etc/grub.d/40_custom; then
+  DIR=/boot
+  UUID=$(findmnt -no UUID /boot 2>/dev/null) && DIR= || UUID=$(findmnt -no UUID /)
+  cat >> /etc/grub.d/40_custom <<END
+menuentry "k18" --id k18 {
+    insmod part_gpt
+    insmod ext2
+    insmod multiboot
+    search --no-floppy --fs-uuid --set=root $UUID
+    multiboot $DIR/k18.bin
+}
+END
+  update-grub 2>&1 | tail -1
+fi
+UNIT=/etc/systemd/system/k18-chain.service
+if [ "$PERSIST" = 1 ]; then
+  cat > $UNIT <<END
+[Unit]
+Description=Start k18 a minute after Linux has come up, unless somebody holds it (touch /run/k18.hold)
+After=multi-user.target
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'sleep 60; [ -e /run/k18.hold ] || { grub-reboot k18 && systemctl reboot; }'
+[Install]
+WantedBy=multi-user.target
+END
+  chmod 644 $UNIT
+  systemctl daemon-reload
+  systemctl enable k18-chain.service >/dev/null 2>&1
+elif [ "$PERSIST" = 0 ] && [ -e $UNIT ]; then
+  systemctl disable k18-chain.service >/dev/null 2>&1 || true
+  rm -f $UNIT
+  systemctl daemon-reload
+fi
+grub-reboot k18
+sync
+nohup sh -c "sleep 1; systemctl reboot" >/dev/null 2>&1 &
+EOF
+  local sans=
+  if [[ -f $out/pack.conf ]]; then sans=$(source "$out/pack.conf" && echo "${sans:-}"); fi
+  up "$host" "$(cat "$out/name")" "${4:-$([[ -s $out/ca.pem ]] && echo "$out/ca.pem")}" "$sans" ||
+    die "the server did not answer https://$(cat "$out/name")/ within two minutes. A reset brings Linux back."
+}
+
+# raw HOST OUT RESCUE BOOT DISK FIRST: the image of OUT over the disk of the machine, which
+# first has to be in its rescue system and to be itself: to have, on its disk, the key
+# that goes with this image. (It is then sent nothing it has not got.)
+raw() {
+  local host=$1 out=$2 cert sans=
+  [[ -f $out/pack.conf ]] || die "$out/pack.conf is not there (k18 pack makes it: it says where the key is that goes with the image)"
+  cert=$(source "$out/pack.conf" && echo "$cert")
+  sans=$(source "$out/pack.conf" && echo "${sans:-}")
+  [[ -s $cert/server.key && -s $cert/server.pem ]] || die "$cert has no key and certificate (it is where $out/pack.conf says they are)"
+  tmp
+  rescue "$host" "$3" "$5"
+  itself "$host" "$6" "$WORK/was" "$cert/server.pem"
+  write "$host" "$out" "$cert"
+  up "$host" "$(cat "$out/name")" "$([[ -s $out/ca.pem ]] && echo "$out/ca.pem")" "$sans" ||
+    die "the server did not answer https://$(cat "$out/name")/ within two minutes"
+}
+
+deploy() {
+  local host=${1:-} out= grub= persist=0 reset= rescuecmd= bootcmd= disk= first=
+  [[ -n $host && $host != -* ]] || die "deploy: which host?"
+  shift
+  while (($#)); do
+    case $1 in
+      --grub) grub=1; shift;; --persist) grub=1 persist=1; shift;; --reset) grub=1 reset=$2; shift 2;;
+      --rescue) rescuecmd=$2; shift 2;; --boot) bootcmd=$2 BOOT=$2; shift 2;; --disk) disk=$2; shift 2;;
+      --first) first=1; shift;;
+      -*) die "deploy: what is '$1'?";;
+      *) out=$1; shift;;
+    esac
+  done
+  out=$(abs "${out:-build}")
+  if [[ -n $grub ]]; then
+    [[ -z $rescuecmd$bootcmd$disk$first ]] || die "deploy: --grub (and --persist, --reset) is one way, --rescue (and --boot, --disk, --first) the other"
+    [[ -f $out/os.bin ]] || die "deploy: no $out/os.bin (k18 pack first)"
+    linux "$host" "$reset"
+    start "$host" "$out" "$persist"
+  else
+    [[ -f $out/disk.img ]] || die "deploy: no $out/disk.img (k18 pack first)"
+    raw "$host" "$out" "$rescuecmd" "$bootcmd" "$disk" "$first"
+  fi
+}
+
+renew() {
+  local host=${1:-} out= reset= email= staging= force= dry= days=30 grub= rescuecmd= bootcmd= disk= first=
+  [[ -n $host && $host != -* ]] || die "renew: which host?"
+  shift
+  while (($#)); do
+    case $1 in
+      --grub) grub=1; shift;; --reset) grub=1 reset=$2; shift 2;;
+      --rescue) rescuecmd=$2; shift 2;; --boot) bootcmd=$2 BOOT=$2; shift 2;; --disk) disk=$2; shift 2;; --first) first=1; shift;;
+      --email) mailok "$2"; email=$2; shift 2;; --staging) staging=--staging; shift;;
+      --force) force=1; shift;; --days) days=$2; shift 2;; --dry-run) dry=1; shift;;
+      -*) die "renew: what is '$1'?";;
+      *) out=$1; shift;;
+    esac
+  done
+  out=$(abs "${out:-build}")
+  [[ -f $out/pack.conf ]] || die "renew: $out/pack.conf is not there (k18 pack makes it: how the image is to be packed again)"
+  [[ -z $grub || -z $rescuecmd$bootcmd$disk$first ]] || die "renew: --grub (and --reset) is one way, --rescue (and --boot, --disk, --first) the other"
+  local site name ip cert p80 hsts cache headers sans= compress=1 ip6=
+  # shellcheck disable=SC1091
+  source "$out/pack.conf"
+  # Is it time? If not, this was all: nothing is reset, nobody is asked for anything.
+  # (Also when the certificate lacks a name it was packed for: that is said, not acted
+  # on, or a name that does not point here would cost a reset a day.)
+  if [[ -z $force && -f $cert/server.pem ]] && openssl x509 -checkend $((days * 86400)) -noout -in "$cert/server.pem" >/dev/null; then
+    local no
+    # shellcheck disable=SC2086
+    no=$(lacks "$cert/server.pem" "$name" $sans)
+    echo "the certificate for $name is good until $(openssl x509 -enddate -noout -in "$cert/server.pem" | cut -d= -f2): nothing to do (--force gets a new one all the same)"
+    [[ -z $no ]] || echo "k18: but it is not for: $no(--force gets one that is)" >&2
+    return 0
+  fi
+  local new san
+  tmp
+  mkdir -p "$cert"
+  new=$(mktemp -d "$cert/.new.XXXXXX")
+  NEWDIR=$new                     # (gone when this ends, however it ends)
+  # shellcheck disable=SC2086
+  san=$(keynew "$new" "$name" $sans) || die "no request for a certificate could be made for: $name $sans"
+  if [[ -n $dry ]]; then
+    echo "would ask Let's Encrypt for a certificate for $san ($(openssl req -in "$new/csr.pem" -noout -subject)), then pack $site again and start it on $host"
+    return 0
+  fi
+  # again: the image as it was is started again (no certificate came, or it could not be packed)
+  if [[ -n $grub ]]; then
+    linux "$host" "$reset"
+    again() { start "$host" "$out" keep ${staging:+nobody}; }
+  else
+    rescue "$host" "$rescuecmd" "$disk"
+    itself "$host" "$first" "$WORK/was" "$cert/server.pem"   # (it has the key we hold for it: the old one)
+    again() { boot; }
+  fi
+  if ! certnew "$new/csr.pem" "$new/server.pem" "$email" "$staging" || ! came "$new/server.key" "$new/server.pem" "$staging"; then
+    echo "k18: no certificate came for $name: starting the image as it was" >&2
+    again
+    exit 1
+  fi
+  # The old pair is kept beside the new one, the image packed again as it was packed, and
+  # started. (If it can't be packed, the old pair is put back, and the image as it was.)
+  mkdir -p "$cert/old"
+  rm -f "$cert/old/ca.pem"
+  [[ -f $cert/server.key ]] && cp -p "$cert/server.key" "$cert/server.pem" "$cert/old/"
+  [[ ! -f $cert/ca.pem ]] || mv "$cert/ca.pem" "$cert/old/"   # (a public chain: nothing for clients to add)
+  mv "$new/server.key" "$cert/server.key"
+  mv "$new/server.pem" "$cert/server.pem"
+  if ! build "$site" "$name" "$ip" "$cert" "$out" "$p80" "$hsts" "$cache" "$headers" "$sans" "$compress" "$ip6"; then
+    echo "k18: the image could not be packed again: the key and certificate as they were are back in $cert, and the image as it was is started" >&2
+    mkdir -p "$cert/failed"
+    mv "$cert/server.key" "$cert/server.pem" "$cert/failed/"
+    mv "$cert/old/"* "$cert/"
+    again
+    exit 1
+  fi
+  if [[ -n $grub ]]; then
+    start "$host" "$out" keep ${staging:+nobody}
+  else
+    write "$host" "$out" "$cert"
+    up "$host" "$(cat "$out/name")" "${staging:+nobody}" "$sans" || die "the server did not answer https://$name/ within two minutes"
+  fi
+}
+
+case ${1:-} in
+  pack) shift; pack "$@";;
+  run) shift; run "$@";;
+  publish) shift; publish "$@";;
+  deploy) shift; deploy "$@";;
+  renew) shift; renew "$@";;
+  *) sed -n '2,/^set -euo pipefail$/{/^set -euo pipefail$/!p}' "$0" | sed 's/^# \{0,1\}//'; exit 1;;
+esac

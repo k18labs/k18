@@ -1,0 +1,92 @@
+# A push publishes the site: this is .github/workflows/publish.yml of the repository
+# that holds the site (copy it there). Once a day the certificate is to be looked at as
+# well, but do not count on that: in two private repositories made to try it GitHub
+# started no run from a schedule in hours, while every push ran at once. Look whether
+# yours does (Actions > publish: a run that says "schedule"); if not, a push, a run by
+# hand or `k18 publish --if-due` from a cron job of your own every month does it.
+# It runs `k18 publish` (k18's README says what that does): the machine, which is k18's
+# alone, goes into its rescue system, says who it is from its own disk, gets the site
+# packed with its key and certificate (a new pair from Let's Encrypt when the old one
+# has 45 days left), and is started from that. Nothing is kept here, and the site's key
+# is never in this repository or its secrets: it is made on the runner and lives on the
+# machine's disk.
+#
+# What this needs to be told (Settings > Secrets and variables > Actions), for a machine
+# at Hetzner (for another host: its tool in "what it takes", its way in --rescue, and
+# docs/server.md of k18 for what is known of it):
+#   variables  NAME          the site's name: example.org
+#              SANS          its other names, with blanks between them (www.example.org), or none
+#              HOST          the machine's address
+#              SERVER        what the host calls the machine
+#              SSH_KEY_NAME  what the host calls the ssh key below
+#              SITE          the folder with the site (default: site)
+#              IP6           the machine's IPv6 address, if the site is to be reached that way too
+#   secrets    HCLOUD_TOKEN  the host's token for the project the machine is in (read and
+#                            write: it can do there whatever you can, so give the machine
+#                            a project of its own)
+#              SSH_KEY       a private ssh key made for this, whose public half the host
+#                            has (ssh-keygen -t ed25519 -N '' -f key; hcloud ssh-key create
+#                            --name NAME --public-key-from-file key.pub)
+# The first time, the machine has nothing that says it is yours: run the workflow by hand
+# (Actions > publish > Run workflow) with "first" ticked. Whoever can push to the branch,
+# and whoever has the two secrets, can publish: nobody else.
+name: publish
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+    inputs:
+      first:
+        description: the machine's first image (nothing vouches for it yet)
+        type: boolean
+concurrency: publish
+permissions:
+  contents: read
+  actions: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: k18labs/k18
+          ref: dev                  # (or the commit you have read)
+          path: .k18
+      - name: What it takes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nasm python3-cryptography brotli hcloud-cli
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" | install -m 600 /dev/stdin ~/.ssh/id_ed25519
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+      - name: Publish
+        run: |
+          more=()
+          for n in $SANS; do more+=(--san "$n"); done
+          [[ -z $IP6 ]] || more+=(-6 "$IP6")
+          .k18/k18 publish "${SITE:-site}" "$HOST" -n "$NAME" "${more[@]}" --hsts 31536000 --days 45 $IF_DUE $FIRST \
+            --rescue "hcloud server enable-rescue --ssh-key '$SSH_KEY_NAME' '$SERVER' && hcloud server reset '$SERVER'"
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          NAME: ${{ vars.NAME }}
+          SANS: ${{ vars.SANS }}
+          HOST: ${{ vars.HOST }}
+          SERVER: ${{ vars.SERVER }}
+          SSH_KEY_NAME: ${{ vars.SSH_KEY_NAME }}
+          SITE: ${{ vars.SITE }}
+          IP6: ${{ vars.IP6 }}
+          IF_DUE: ${{ github.event_name == 'schedule' && '--if-due' || '' }}
+          FIRST: ${{ inputs.first && '--first' || '' }}
+      # GitHub switches a scheduled workflow off when nothing has happened in a public
+      # repository for 60 days (it writes to you first): a site that does not change
+      # would lose its renewal. This asks for the workflow to stay on.
+      - name: Stay on
+        if: github.event_name == 'schedule'
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/publish.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,9 @@
+# everything in build*/ is generated; cert*/ hold private keys (cert/ is made on the first build)
+build*/
+cert*/
+*.key
+*.pem
+__pycache__/
+
+# what the tests from outside are run with (tools/outside.sh fetch)
+ext/
