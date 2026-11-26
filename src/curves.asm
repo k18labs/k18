@@ -106,8 +106,9 @@ cswap:  neg edx
         pxor xmm2, xmm3
         movdqa [rdi], xmm1
         movdqa [rdi+64], xmm2
-        add rdi, 16
-        loop .s
+        add edi, 16              ; R_X is below 4 GiB
+        dec ecx
+        jnz .s
         ret
 
 ; freeze: the number at rsi (four limbs, below 2^256) mod 2^255 - 19, to rdi (which moves on)

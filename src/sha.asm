@@ -40,7 +40,8 @@ shaout: mov esi, SH
 .o:     lodsd
         bswap eax
         stosd
-        loop .o
+        dec ecx
+        jnz .o
         ret
 
 ; shaend: the state at SH takes in the ecx bytes at rsi, which end a message of edx bytes: the
@@ -186,7 +187,8 @@ hmac:
         call sha256             ; inner hash
         mov cl, 64
 .o:     xor byte [HB+rcx-1], 0x36 ^ 0x5c
-        loop .o
+        dec ecx
+        jnz .o
         mov cl, 96
         pop rdi
         call sha256             ; outer hash
