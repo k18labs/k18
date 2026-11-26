@@ -537,9 +537,9 @@ shaconst:
 %include "tls.asm"          ; `handshake`: the ClientHello, and our flight
 %endif
 
-%include "sha.asm"          ; `keys`, `sha256`, `hmac`, `expand`
-
 %include "curves.asm"       ; `xdh`, `sign`, `rand`, `stock`, and the arithmetic under them
+
+%include "sha.asm"          ; `keys`, `sha256`, `hmac`, `expand`
 
 %include "aesgcm.asm"       ; `seal`: AES-128-GCM
 

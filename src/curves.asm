@@ -18,6 +18,37 @@ R_C     equ REGS + 15*32
 %define fadd19 fas.a19        ; add and subtract mod 2^255 - 19, without `fas` asking which
 %define fsub19 fas.s19
 
+        HOT 0x03000000
+; vm: run the program at rsi in the field at rbp. Returns rsi = after the program; clobbers
+; all else but rbp. In the image a program is 2 bytes per operation (a << 4 | b, op << 4 |
+; dst; a zero byte ends it: tools/ec.py); what runs is what boot made of that (`ecinit`,
+; from XP on, X_name for each): the three registers' addresses and the operation less 1,
+; a dword each, and a zero dword to end it.
+vm:     mov edi, [rsi]
+        test edi, edi
+        jz .end
+        mov ebx, [rsi+8]
+        mov ecx, [rsi+12]       ; 0 add, 1 subtract, 2 multiply, 3 multiply (a has one
+        push rsi                ; limb), 4 square
+        mov esi, [rsi+4]
+        cmp ecx, 2
+        je .mul
+        ja .more
+        call fas
+        jmp .next
+.mul:   call fmul
+.next:  pop rsi
+        add rsi, 16
+        jmp vm
+.more:  cmp ecx, 4
+        je .sqr
+        call fmul1
+        jmp .next
+.sqr:   call fsqr
+        jmp .next
+.end:   add rsi, 4
+        ret
+
 ; xdh: our X25519 key share for the secret E (clamped as in RFC 7748: a multiple of 8, so
 ; every point of small order makes R_X = 0) to rdi (which moves on 32 bytes), and R_X = the
 ; secret we share with the client whose key share is at rsi.
@@ -415,37 +446,6 @@ select: mov edi, REGS
         mov eax, ecx
         shl eax, 4
         add rsi, rax
-        ret
-
-        HOT 0x03000000
-; vm: run the program at rsi in the field at rbp. Returns rsi = after the program; clobbers
-; all else but rbp. In the image a program is 2 bytes per operation (a << 4 | b, op << 4 |
-; dst; a zero byte ends it: tools/ec.py); what runs is what boot made of that (`ecinit`,
-; from XP on, X_name for each): the three registers' addresses and the operation less 1,
-; a dword each, and a zero dword to end it.
-vm:     mov edi, [rsi]
-        test edi, edi
-        jz .end
-        mov ebx, [rsi+8]
-        mov ecx, [rsi+12]       ; 0 add, 1 subtract, 2 multiply, 3 multiply (a has one
-        push rsi                ; limb), 4 square
-        mov esi, [rsi+4]
-        cmp ecx, 2
-        je .mul
-        ja .more
-        call fas
-        jmp .next
-.mul:   call fmul
-.next:  pop rsi
-        add rsi, 16
-        jmp vm
-.more:  cmp ecx, 4
-        je .sqr
-        call fmul1
-        jmp .next
-.sqr:   call fsqr
-        jmp .next
-.end:   add rsi, 4
         ret
 
         HOT 0x0001F7CF
