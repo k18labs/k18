@@ -143,41 +143,6 @@ xdh:    pushad
         ret
 
 
-; freeze: the number at rsi (four limbs, below 2^256) mod 2^255 - 19, to rdi (which moves on)
-freeze: mov r8, [rsi]
-        mov r9, [rsi+8]
-        mov r10, [rsi+16]
-        mov r11, [rsi+24]
-        mov rax, r11            ; bit 255 is worth 19
-        shr rax, 63
-        imul eax, eax, 19
-        btr r11, 63
-        add r8, rax
-        adc r9, 0
-        adc r10, 0
-        adc r11, 0              ; below 2^255 + 19 now. If that plus 19 reaches 2^255, it was
-        mov rax, r8             ; 2^255 - 19 or more, and that sum less 2^255 is the answer
-        mov rcx, r9
-        mov rdx, r10
-        mov r12, r11
-        add rax, 19
-        adc rcx, 0
-        adc rdx, 0
-        adc r12, 0
-        btr r12, 63
-        cmovc r8, rax
-        cmovc r9, rcx
-        cmovc r10, rdx
-        cmovc r11, r12
-        ; fall through
-; put4: the four limbs r8-r11 to rdi (which moves on)
-put4:    mov [rdi], r8
-        mov [rdi+8], r9
-        mov [rdi+16], r10
-        mov [rdi+24], r11
-        add rdi, 32
-        ret
-
 ; sign: an ECDSA signature of the 32-byte hash at rsi under our key: r to R_X, s = (hash +
 ; r d) / k to R_Y, both canonical. The half that needs no hash, r = x(k G) and 1 / k for a
 ; fresh random nonce k, is taken from a stock that `stock` makes: each is used once.
@@ -409,6 +374,221 @@ comb:   xor eax, eax
         cmp al, 64
         jb .w
         ret
+
+; freeze: the number at rsi (four limbs, below 2^256) mod 2^255 - 19, to rdi (which moves on)
+freeze: mov r8, [rsi]
+        mov r9, [rsi+8]
+        mov r10, [rsi+16]
+        mov r11, [rsi+24]
+        mov rax, r11            ; bit 255 is worth 19
+        shr rax, 63
+        imul eax, eax, 19
+        btr r11, 63
+        add r8, rax
+        adc r9, 0
+        adc r10, 0
+        adc r11, 0              ; below 2^255 + 19 now. If that plus 19 reaches 2^255, it was
+        mov rax, r8             ; 2^255 - 19 or more, and that sum less 2^255 is the answer
+        mov rcx, r9
+        mov rdx, r10
+        mov r12, r11
+        add rax, 19
+        adc rcx, 0
+        adc rdx, 0
+        adc r12, 0
+        btr r12, 63
+        cmovc r8, rax
+        cmovc r9, rcx
+        cmovc r10, rdx
+        cmovc r11, r12
+        ; fall through
+; put4: the four limbs r8-r11 to rdi (which moves on)
+put4:    mov [rdi], r8
+        mov [rdi+8], r9
+        mov [rdi+16], r10
+        mov [rdi+24], r11
+        add rdi, 32
+        ret
+
+
+ecinit: mov edi, BSWAPM         ; (and what GHASH needs: how pshufb reverses 16 bytes)
+        mov al, 15
+.bs:    stosb
+        dec al
+        jns .bs
+        mov esi, INIT25519      ; the programs, unpacked for `vm`: they follow each other
+        mov edi, XP             ; in the image
+        mov dl, NPROG
+.op:    lodsb
+        movzx ebx, al
+        test ebx, ebx
+        jz .pe
+        lodsb
+        movzx ecx, al
+        call .reg               ; dst,
+        mov eax, ebx
+        shr eax, 4
+        call .reg               ; a,
+        xchg eax, ebx
+        call .reg               ; b,
+        xchg eax, ecx
+        shr eax, 4
+        dec eax
+        stosd                   ; and what to do with them
+        jmp .op
+.pe:    xchg eax, ebx
+        stosd
+        dec dl
+        jnz .op
+        mov edi, F25519 + F_M
+        or rax, -1
+        push 4
+        pop rcx
+        rep stosq
+        mov byte [rdi-32], -38
+        add edi, FSIZE - 32     ; p of P-256: 2^64 - 1, 2^32 - 1, 0, 2^64 - 2^32 + 1
+        stosq
+        mov eax, eax
+        stosq
+        scasq
+        neg rax
+        stosq
+        inc byte [rdi]          ; (-1/p = 1)
+        add edi, FSIZE - 32     ; n of P-256: its low half is data, then 2^64 - 1, 2^64 - 2^32
+        mov esi, NLOW
+        movsq
+        movsq
+        or rax, -1
+        stosq
+        shl rax, 32
+        stosq
+        movsq                   ; (-1/n)
+        mov edi, F25519
+        mov bl, 3
+.f:     xor edx, edx            ; for each: 2^256 - M and M - 2
+        mov cl, 4
+        stc
+.n:     mov rax, [rdi+F_M+rdx*8]
+        mov [rdi+F_EXP+rdx*8], rax
+        not rax
+        adc rax, 0
+        mov [rdi+rdx*8], rax
+        inc edx
+        loop .n
+        sub byte [rdi+F_EXP], 2
+        add edi, FSIZE
+        dec bl
+        jnz .f
+        mov edi, KOFFV          ; what a nonce loses before its nibbles are looked up
+        mov al, 0x11
+        mov cl, 32
+        rep stosb
+        mov byte [rdi-1], 0x91
+        inc byte [R_ONE]
+        mov dword [R_A24], 121665
+        ; The table for edwards25519: window i has j 16^i B for j = 0 .. 15, as
+        ; (y + x, y - x, 2 d x y). One row is: the point 16^i B as such an entry in E0-E2,
+        ; then 16 times: the sum so far to the table, and that point added to it.
+        mov ebp, F25519
+        mov edi, R_X            ; X, Y, Z = B (Z = 1), then our key's D, then C = 2 d
+        mov cl, 8               ; (esi = EDC, after NLOW)
+        rep movsq
+        inc byte [rdi]
+        mov edi, R_D
+        mov cl, 8
+        rep movsq
+        mov edi, TABE
+        mov bl, 64
+.erow:  push rdi
+        mov edi, R_E0
+        call .epre
+        pop rdi
+        mov esi, X_INITED
+        call .vm
+        mov bh, 16
+.eent:  call .epre
+        mov esi, X_MADDED
+        call .vm
+        dec bh
+        jnz .eent
+        dec bl
+        jnz .erow
+        ; The table for P-256: window i has (j + 1) 16^i G for j = 0 .. 15, as (x, y) times R.
+        ; One row is: 16 times the sum so far to the table, and 16^i G added to it (the
+        ; first time that is a doubling, the last time it is left out).
+        mov ebp, FP256
+        mov esi, ebp            ; C = R mod p = 2^256 - p
+        mov edi, R_C
+        push 4                  ; (the multiplications leave nothing of rcx)
+        pop rcx
+        rep movsq
+        mov esi, REGC           ; G
+        mov edi, R_E0
+        mov cl, 8
+        rep movsq
+        mov esi, X_INIT256
+        call vm
+        mov edi, TABP
+        mov bl, 64
+.prow:  mov bh, 16
+.pent:  mov esi, X_TOAFF
+        call .conv
+        mov esi, R_T0
+        cmp bh, 16
+        jne .pcp
+        push rdi
+        mov edi, R_E0           ; (the first of a row is what the others add)
+        push 8
+        pop rcx
+        rep movsq
+        pop rdi
+        mov esi, R_T0
+.pcp:   push 8
+        pop rcx
+        rep movsq
+        mov esi, X_DBL256
+        cmp bh, 16
+        je .pgo
+        mov esi, X_MADD256
+        cmp bh, 1
+        je .pno
+.pgo:   call .vm
+.pno:   dec bh
+        jnz .pent
+        dec bl
+        jnz .prow
+        ret
+; (the point in X.. as a table entry of edwards25519 to rdi, which moves on)
+.epre:  mov esi, X_TOPRE
+        call .conv
+        mov esi, R_T0
+        push 12
+        pop rcx
+        rep movsq
+        ret
+; (a register's address, for its number in the low four bits of eax, to edi, which moves on)
+.reg:   and eax, 15
+        shl eax, 5
+        add eax, REGS
+        stosd
+        ret
+; (T1 = 1 / Z, then the program at rsi; keeps rdi and rbx, as .vm does)
+.conv:  push rsi
+        push rdi
+        push rbx
+        mov esi, R_Z
+        call inv
+        pop rbx
+        pop rdi
+        pop rsi
+.vm:    push rdi
+        push rbx
+        call vm
+        pop rbx
+        pop rdi
+        ret
+
+%ifdef HOST
 
         HOT 0xE1FEE7FF
 ; select: entry number edx of the 16 entries (ecx bytes each, a multiple of 32) at rsi to the
@@ -785,184 +965,6 @@ inv:    mov edi, R_T0
 ; ecinit (boot): the three fields, the constant registers and the two tables.
 ; A field is: 2^256 - M | M | -1/M mod 2^64 (0 for 2^255 - 19, which is reduced its own
 ; way and has M = 2^256 - 38, twice the prime) | m - 2, the exponent that inverts.
-ecinit: mov edi, BSWAPM         ; (and what GHASH needs: how pshufb reverses 16 bytes)
-        mov al, 15
-.bs:    stosb
-        dec al
-        jns .bs
-        mov esi, INIT25519      ; the programs, unpacked for `vm`: they follow each other
-        mov edi, XP             ; in the image
-        mov dl, NPROG
-.op:    lodsb
-        movzx ebx, al
-        test ebx, ebx
-        jz .pe
-        lodsb
-        movzx ecx, al
-        call .reg               ; dst,
-        mov eax, ebx
-        shr eax, 4
-        call .reg               ; a,
-        xchg eax, ebx
-        call .reg               ; b,
-        xchg eax, ecx
-        shr eax, 4
-        dec eax
-        stosd                   ; and what to do with them
-        jmp .op
-.pe:    xchg eax, ebx
-        stosd
-        dec dl
-        jnz .op
-        mov edi, F25519 + F_M
-        or rax, -1
-        push 4
-        pop rcx
-        rep stosq
-        mov byte [rdi-32], -38
-        add edi, FSIZE - 32     ; p of P-256: 2^64 - 1, 2^32 - 1, 0, 2^64 - 2^32 + 1
-        stosq
-        mov eax, eax
-        stosq
-        scasq
-        neg rax
-        stosq
-        inc byte [rdi]          ; (-1/p = 1)
-        add edi, FSIZE - 32     ; n of P-256: its low half is data, then 2^64 - 1, 2^64 - 2^32
-        mov esi, NLOW
-        movsq
-        movsq
-        or rax, -1
-        stosq
-        shl rax, 32
-        stosq
-        movsq                   ; (-1/n)
-        mov edi, F25519
-        mov bl, 3
-.f:     xor edx, edx            ; for each: 2^256 - M and M - 2
-        mov cl, 4
-        stc
-.n:     mov rax, [rdi+F_M+rdx*8]
-        mov [rdi+F_EXP+rdx*8], rax
-        not rax
-        adc rax, 0
-        mov [rdi+rdx*8], rax
-        inc edx
-        loop .n
-        sub byte [rdi+F_EXP], 2
-        add edi, FSIZE
-        dec bl
-        jnz .f
-        mov edi, KOFFV          ; what a nonce loses before its nibbles are looked up
-        mov al, 0x11
-        mov cl, 32
-        rep stosb
-        mov byte [rdi-1], 0x91
-        inc byte [R_ONE]
-        mov dword [R_A24], 121665
-        ; The table for edwards25519: window i has j 16^i B for j = 0 .. 15, as
-        ; (y + x, y - x, 2 d x y). One row is: the point 16^i B as such an entry in E0-E2,
-        ; then 16 times: the sum so far to the table, and that point added to it.
-        mov ebp, F25519
-        mov edi, R_X            ; X, Y, Z = B (Z = 1), then our key's D, then C = 2 d
-        mov cl, 8               ; (esi = EDC, after NLOW)
-        rep movsq
-        inc byte [rdi]
-        mov edi, R_D
-        mov cl, 8
-        rep movsq
-        mov edi, TABE
-        mov bl, 64
-.erow:  push rdi
-        mov edi, R_E0
-        call .epre
-        pop rdi
-        mov esi, X_INITED
-        call .vm
-        mov bh, 16
-.eent:  call .epre
-        mov esi, X_MADDED
-        call .vm
-        dec bh
-        jnz .eent
-        dec bl
-        jnz .erow
-        ; The table for P-256: window i has (j + 1) 16^i G for j = 0 .. 15, as (x, y) times R.
-        ; One row is: 16 times the sum so far to the table, and 16^i G added to it (the
-        ; first time that is a doubling, the last time it is left out).
-        mov ebp, FP256
-        mov esi, ebp            ; C = R mod p = 2^256 - p
-        mov edi, R_C
-        push 4                  ; (the multiplications leave nothing of rcx)
-        pop rcx
-        rep movsq
-        mov esi, REGC           ; G
-        mov edi, R_E0
-        mov cl, 8
-        rep movsq
-        mov esi, X_INIT256
-        call vm
-        mov edi, TABP
-        mov bl, 64
-.prow:  mov bh, 16
-.pent:  mov esi, X_TOAFF
-        call .conv
-        mov esi, R_T0
-        cmp bh, 16
-        jne .pcp
-        push rdi
-        mov edi, R_E0           ; (the first of a row is what the others add)
-        push 8
-        pop rcx
-        rep movsq
-        pop rdi
-        mov esi, R_T0
-.pcp:   push 8
-        pop rcx
-        rep movsq
-        mov esi, X_DBL256
-        cmp bh, 16
-        je .pgo
-        mov esi, X_MADD256
-        cmp bh, 1
-        je .pno
-.pgo:   call .vm
-.pno:   dec bh
-        jnz .pent
-        dec bl
-        jnz .prow
-        ret
-; (the point in X.. as a table entry of edwards25519 to rdi, which moves on)
-.epre:  mov esi, X_TOPRE
-        call .conv
-        mov esi, R_T0
-        push 12
-        pop rcx
-        rep movsq
-        ret
-; (a register's address, for its number in the low four bits of eax, to edi, which moves on)
-.reg:   and eax, 15
-        shl eax, 5
-        add eax, REGS
-        stosd
-        ret
-; (T1 = 1 / Z, then the program at rsi; keeps rdi and rbx, as .vm does)
-.conv:  push rsi
-        push rdi
-        push rbx
-        mov esi, R_Z
-        call inv
-        pop rbx
-        pop rdi
-        pop rsi
-.vm:    push rdi
-        push rbx
-        call vm
-        pop rbx
-        pop rdi
-        ret
-
-%ifdef HOST
 bdrain: ret                     ; (the tests have no device)
 echost: pushad                  ; (for the tests: C wants its registers back)
         call ecinit
