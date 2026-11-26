@@ -293,12 +293,37 @@ def straight(prog):
     that way (tools/gen.py: step.inc): it runs 255 times a handshake, and fetching and
     telling apart its 18 operations cost a seventh of them."""
     out = []
+    regs = [None, None, None]  # edi, esi, ebx: addresses known to survive each call
     for i in range(0, len(prog) - 1, 2):
         b, a, dst, op = prog[i] & 15, prog[i] >> 4, prog[i + 1] & 15, prog[i + 1] >> 4
-        out += [f"        mov edi, REGS + {32 * dst}", f"        mov esi, REGS + {32 * a}"]
-        if op != SQR:
-            out.append(f"        mov ebx, REGS + {32 * b}")
+        want = [dst, a, b if op != SQR else None]
+        names = ("edi", "esi", "ebx")
+        pending = {r for r in range(3) if want[r] is not None and regs[r] != want[r]}
+        while pending:
+            # Prefer a register copy when its source is already live. Do not overwrite
+            # the sole copy of a value needed by another pending operand.
+            move = None
+            for r in sorted(pending):
+                src = next((s for s in range(3) if s != r and regs[s] == want[r]), None)
+                if src is not None and not any(q != r and regs[r] == want[q] and
+                                               sum(v == want[q] for v in regs) == 1
+                                               for q in pending):
+                    move = (r, src, True)
+                    break
+            if move is None:
+                r = min(pending)
+                move = (r, None, False)
+            r, src, copied = move
+            if copied:
+                out.append(f"        mov {names[r]}, {names[src]}")
+                regs[r] = regs[src]
+            else:
+                out.append(f"        mov {names[r]}, REGS + {32 * want[r]}")
+                regs[r] = want[r]
+            pending.remove(r)
         out.append("        JUMPH 5\n        call " + ("fadd19", "fsub19", "fmul", "fmul1", "fsqr")[op - 1])
+        if op == MUL:
+            regs[1] = regs[2]  # fmul preserves edi/ebx and sets esi = ebx
     return "\n".join(out) + "\n"
 
 

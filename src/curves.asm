@@ -50,7 +50,7 @@ xdh:    pushad
         mov esi, X_INIT25519
         call vm
         xor edx, edx            ; The ladder, from the top bit down. The two points change
-        mov ecx, 255            ; places when a bit differs from the one before it.
+        mov ecx, 254            ; RFC 7748: the clamped scalar's top bit is bit 254.
 .l:     JUMPH 5                 ; (every jump of this loop is kept off the 32-byte boundaries
         test cl, 63             ; where it stands, by JUMPH: the routine may begin anywhere)
         jnz .step
