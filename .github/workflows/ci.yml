@@ -22,6 +22,8 @@ jobs:
         run: make
       - name: Run crypto tests
         run: make test
+      - name: Check reproducible generated image data
+        run: tools/repro.sh
       - name: Fetch independent crypto and TLS test tools
         run: tools/outside.sh fetch
       - name: Run Wycheproof and RFC 6979 vectors
@@ -30,5 +32,7 @@ jobs:
         run: make ct
       - name: Fuzz TLS 1.3 protocol handling
         run: sudo unshare -n -- tools/tlsfuzz.sh
+      - name: Exercise multi-record site responses
+        run: sudo unshare -n -- env NOBUILD=1 tools/sitetest.sh tap
       - name: Check Python syntax
         run: python3 -m compileall -q tools test

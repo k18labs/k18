@@ -178,6 +178,7 @@ sendrun:
         lea edi, [rbx+54]
         pop rcx
         push rbx
+        push 0                   ; first record fills RK and HTAB; later records reuse them
         add ecx, edi
         push rcx                ; (where the frame will end)
         lea rbx, [rbp+C_KIV]
@@ -188,14 +189,23 @@ sendrun:
         cmova ecx, eax
         sub ecx, 22             ; of which so many bytes are the response's
         mov al, 23
+        cmp qword [rsp+8], 0
+        jne .cached
+        mov qword [rsp+8], 1
         clc
         call seal               ; (edi moves on)
+        jmp .sealed
+.cached:
+        clc
+        call seal_cached
+.sealed:
         add esi, ecx
         inc edx
         call bdrain             ; (a frame of records takes its time: what comes in meanwhile
         cmp edi, [rsp]          ; goes on to the rings)
         jb .rec
         pop rcx
+        pop rax                 ; cache flag
         pop rbx                 ; The frame,
         sub ecx, ebx
         sub ecx, 54             ; how many bytes lie in it,
