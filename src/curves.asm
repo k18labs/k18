@@ -49,6 +49,29 @@ vm:     mov edi, [rsi]
 .end:   add rsi, 4
         ret
 
+        HOT 0xFFFFFFF8
+; cswap: swap (X, Y) with (Z, T) if edx = 1, not if edx = 0 (clobbers rcx, rdx, rdi,
+; xmm0-xmm3)
+cswap:  neg edx
+        movd xmm0, edx
+        pshufd xmm0, xmm0, 0    ; all ones, or nothing
+        mov edi, R_X
+        push 4
+        pop rcx
+.s:     movdqa xmm1, [rdi]
+        movdqa xmm2, [rdi+64]
+        movdqa xmm3, xmm1
+        pxor xmm3, xmm2         ; what the two differ in, if they are to be swapped
+        pand xmm3, xmm0
+        pxor xmm1, xmm3
+        pxor xmm2, xmm3
+        movdqa [rdi], xmm1
+        movdqa [rdi+64], xmm2
+        add edi, 16              ; R_X is below 4 GiB
+        dec ecx
+        jnz .s
+        ret
+
 ; xdh: our X25519 key share for the secret E (clamped as in RFC 7748: a multiple of 8, so
 ; every point of small order makes R_X = 0) to rdi (which moves on 32 bytes), and R_X = the
 ; secret we share with the client whose key share is at rsi.
@@ -119,28 +142,6 @@ xdh:    pushad
         popad
         ret
 
-        HOT 0xFFFFFFF8
-; cswap: swap (X, Y) with (Z, T) if edx = 1, not if edx = 0 (clobbers rcx, rdx, rdi,
-; xmm0-xmm3)
-cswap:  neg edx
-        movd xmm0, edx
-        pshufd xmm0, xmm0, 0    ; all ones, or nothing
-        mov edi, R_X
-        push 4
-        pop rcx
-.s:     movdqa xmm1, [rdi]
-        movdqa xmm2, [rdi+64]
-        movdqa xmm3, xmm1
-        pxor xmm3, xmm2         ; what the two differ in, if they are to be swapped
-        pand xmm3, xmm0
-        pxor xmm1, xmm3
-        pxor xmm2, xmm3
-        movdqa [rdi], xmm1
-        movdqa [rdi+64], xmm2
-        add edi, 16              ; R_X is below 4 GiB
-        dec ecx
-        jnz .s
-        ret
 
 ; freeze: the number at rsi (four limbs, below 2^256) mod 2^255 - 19, to rdi (which moves on)
 freeze: mov r8, [rsi]
