@@ -17,7 +17,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nasm gcc make python3 python3-cryptography python3-pip \
-            brotli qemu-system-x86 iproute2 iptables
+            brotli qemu-system-x86 iproute2 iptables libc6-dbg
       - name: Build image
         run: make
       - name: Run crypto tests
