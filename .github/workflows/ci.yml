@@ -10,16 +10,25 @@ permissions:
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm gcc make python3 python3-cryptography
+          sudo apt-get install -y nasm gcc make python3 python3-cryptography python3-pip \
+            brotli qemu-system-x86 iproute2 iptables
       - name: Build image
         run: make
       - name: Run crypto tests
         run: make test
+      - name: Fetch independent crypto and TLS test tools
+        run: tools/outside.sh fetch
+      - name: Run Wycheproof and RFC 6979 vectors
+        run: make outside
+      - name: Check constant-time behavior with Valgrind
+        run: make ct
+      - name: Fuzz TLS 1.3 protocol handling
+        run: unshare -Urn tools/tlsfuzz.sh
       - name: Check Python syntax
         run: python3 -m compileall -q tools test
