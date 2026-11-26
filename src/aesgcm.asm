@@ -54,13 +54,43 @@ seal:   pushad
         pxor xmm0, xmm2
         movdqa [rdi+64], xmm0
         dec cl
-        jz .sb
+        jz seal_sb
         movdqa xmm0, xmm2
         mov eax, 16
         call gh1
         add edi, 16
         jmp .hp
-.sb:    mov rdi, [rsp]          ; o
+
+; seal_cached: encryption entry when sendrun seals another record under the same key.
+; `bdrain -> prf` only reads packets and does not change RK or HTAB.
+seal_cached:
+        pushad
+        sbb r12, r12
+        bswap edx
+        mov edi, NB
+        mov rax, [rbx+32]
+        stosq
+        mov eax, [rbx+40]
+        xor eax, edx
+        stosd
+        mov eax, 0x01000000
+        stosd
+        movdqa xmm7, [BSWAPM]
+        movdqa xmm1, [NB]
+        movdqa xmm4, xmm1
+        pshufb xmm4, xmm7
+        push 1
+        pop rax
+        movd xmm0, eax
+        paddd xmm4, xmm0
+        pxor xmm0, xmm0
+        call aes4
+        movdqa [TAGM], xmm1
+        mov r8, 0xC200000000000000
+        movq xmm6, r8
+        jmp seal_sb
+
+seal_sb: mov rdi, [rsp]         ; o
         mov rsi, [rsp+8]        ; m
         mov ebx, [rsp+40]       ; n
         mov rdx, r12
