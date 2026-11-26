@@ -86,6 +86,8 @@ seal_cached:
         pxor xmm0, xmm0
         call aes4
         movdqa [TAGM], xmm1
+        mov r8, 0xC200000000000000
+        movq xmm6, r8
         jmp seal_sb
 
 seal_sb: mov rdi, [rsp]         ; o
