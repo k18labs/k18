@@ -54,3 +54,31 @@ In `seg.asm`, advertise MSS 1,220 instead of 1,440. The server caps its own IPv6
 ### Brotli selection in `tools/pack.py`
 
 Evaluate brotli independently of the gzip `worth()` check. Some 1.5–3 KB assets can save a TCP record and at least 10% with brotli even when gzip falls just short. Also only add `br` when it reduces the number of wire segments; adding it for a one-byte win can add a duplicate response and 304 to `site.bin` without reducing segments.
+
+## 0. Governance and project readiness
+
+### P0: Confirm licensing and ownership
+
+- The repository already contains `LICENSE` with Apache-2.0 terms. Confirm the project owners have authority to license all included code and that contributors have granted the needed rights; record the ownership and contribution policy.
+- Keep Apache-2.0 unless the owners decide a different distribution model is intended. Its express patent grant is a useful property for this project.
+
+### P0: Require pull-request review and CI
+
+- Active GitHub workflows now exist in `.github/workflows/`, including a build and crypto-test CI workflow. Keep required checks enabled and add the broader regression suite where practical.
+- Configure GitHub branch protection or a ruleset for `main`: require pull requests, at least one approval, passing CI, and dismissal of stale approvals after new commits.
+- Make review mandatory for security-sensitive changes and require a reviewer familiar with the affected subsystem before merging.
+
+### P0: Improve vulnerability handling
+
+- `SECURITY.md` currently directs researchers to report vulnerabilities through a public issue. Replace that with private reporting instructions and a clear response and coordinated-disclosure policy.
+- Enable GitHub private vulnerability reporting for the repository. Use private security advisories for confirmed vulnerabilities and coordinate fixes and disclosure with reporters.
+
+### P1: Make development collaborative
+
+- `CLAUDE.md` contains project-specific technical requirements mixed with developer-specific workflow and push authorization. Separate reusable contribution guidance from personal operational instructions.
+- Create a contributor guide that identifies subsystem ownership/reviewers, required tests by subsystem, and review expectations for security-sensitive changes.
+
+### P1: Create trustworthy releases
+
+- Establish versioned downloadable releases with validated checksums and build provenance.
+- Document compatibility, release notes, and a support policy so users can assess whether a build is suitable for production.
