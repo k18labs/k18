@@ -401,7 +401,7 @@ keynew() {
   for n in "$@"; do
     if isip "$n"; then san+="${san:+,}IP:$n"; else san+="${san:+,}DNS:$n"; fi
   done
-  (( ${#1} > 64 )) || subj="/CN=$1"       # (a common name has 64 characters at most; the names that count are the others)
+  (( ${#1} > 64 )) || isip "$1" || subj="/CN=$1" # (IP addresses go in the SAN, not the Subject CN)
   openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$dir/server.key" 2>/dev/null || return 1
   openssl req -new -key "$dir/server.key" -subj "$subj" -addext "subjectAltName=$san" -out "$dir/csr.pem" || return 1
   echo "$san"
