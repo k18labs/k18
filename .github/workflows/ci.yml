@@ -28,6 +28,8 @@ jobs:
         run: make test
       - name: Test rawc neighbor lookup input handling
         run: python3 test/test_rawc.py
+      - name: Check publish template dependency pins
+        run: python3 test/test_publish_template.py
       - name: Check reproducible generated image data
         run: tools/repro.sh
       - name: Fetch independent crypto and TLS test tools
