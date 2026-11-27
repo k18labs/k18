@@ -78,7 +78,7 @@ int main(void){
         seed = rngseed;
         ASMCALL(hctr_test_seed, "+D"(seed));
     }
-    TIME("random: CTR_DRBG four qwords", 2000, { u8 *p = random; unsigned n = 4; ASMCALL(hctr_test_generate, "+D"(p), "+c"(n)); });
+    TIME("random: CTR_DRBG four qwords", 2000, { u8 *p = random; unsigned n = 4; ASMCALL(hctr_test_generate, "+D"(p), "+c"(n)); if ((i & 127) == 0) fprintf(stderr, "bench: CTR_DRBG iteration %d\n", i); });
     for (int len = 180; len <= 1418; len += 1238) {
         char t[64];
         sprintf(t, "AES-128-GCM record of %d bytes", len);
