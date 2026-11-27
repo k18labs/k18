@@ -22,8 +22,10 @@ Hetzner's, Linode's is in `docs/server.md`; add `--first` the first time):
 This gets a certificate from Let's Encrypt if the server has none or it is about to
 expire, packs the site, writes the image over the server's disk and boots it. The image
 is not tied to the server (it gets its address by DHCP), and nothing is kept on your
-machine: the key is made where `k18` runs and is stored only on the server's disk. `ci/publish.yml` is a
-GitHub workflow that does this on every push and checks the certificate daily.
+machine: the key is made where `k18` runs and is stored only on the server's disk.
+`ci/publish.yml` is an optional workflow template for a separate repository that holds
+the site; it is not enabled here. This repository's `.github/workflows/ci.yml` builds and
+tests k18 on pushes and pull requests.
 [docs/server.md](docs/server.md) covers hosts.
 
 ## What you get
