@@ -35,10 +35,14 @@ record: pushad
         cmp byte [rsi+rcx], 23
         jne .count              ; (an alert: the client is leaving)
         xor ebx, ebx
+        cmp ecx, 4               ; Do not classify a short plaintext from stale VB bytes
+        jb .other
         cmp dword [rsi], "GET "
         je .get
         cmp dword [rsi], "HEAD"
         jne .other
+        cmp ecx, 5               ; HEAD needs its following space within this plaintext
+        jb .other
         cmp byte [rsi+4], ' '
         jne .other
         mov bh, 0x80            ; (only the head)
@@ -96,8 +100,10 @@ record: pushad
         call pick
         jmp .have
 .other: xor edx, edx            ; Not a request we answer. One that begins like a request
-.word:  mov al, [rsi+rdx]       ; (a method, which is any word, and a space: RFC 9110, 9.1)
-        inc edx                 ; is told so. A header's line is none: its word ends with
+.word:  cmp edx, ecx            ; (a method, which is any word, and a space: RFC 9110, 9.1)
+        jae .said               ; Never scan beyond the authenticated plaintext
+        mov al, [rsi+rdx]       ; is told so. A header's line is none: its word ends with
+        inc edx                 ; A header's line is none: its word ends with
         cmp al, ':'             ; a colon. (What the record says ends before a byte 23,
         je .count               ; so this ends there at the latest.)
         cmp al, ' '

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # k18: a folder of static files becomes a bootable HTTPS server, and gets onto a machine.
+# Security: --rescue, --boot and --reset COMMAND values are run by the local shell. Use only
+# trusted operator commands; never pass network or other untrusted input to these options.
 #
 #   k18 pack SITE [-n NAME] [--san NAME]... [-i IP] [-6 IP6] [-c CERTDIR] [-o OUT] [--plain80]
 #                [--hsts SECONDS] [--cache SECONDS] [--header 'Name: value'] [--no-compress]
