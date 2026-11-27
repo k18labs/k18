@@ -50,11 +50,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: k18labs/k18
-          ref: dev                  # (or the commit you have read)
+          # Update only through review to a full commit SHA from k18labs/k18.
+          ref: fb355e7bc5c81d132369a6cadb990490b0743297
           path: .k18
       - name: What it takes
         run: |
