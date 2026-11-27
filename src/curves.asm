@@ -587,8 +587,6 @@ ecinit: mov edi, BSWAPM         ; (and what GHASH needs: how pshufb reverses 16 
         pop rdi
         ret
 
-%ifdef HOST
-
         HOT 0xE1FEE7FF
 ; select: entry number edx of the 16 entries (ecx bytes each, a multiple of 32) at rsi to the
 ; registers from E0 on. All 16 are read, and what is kept is picked with masks: which one it
@@ -964,6 +962,7 @@ inv:    mov edi, R_T0
 ; ecinit (boot): the three fields, the constant registers and the two tables.
 ; A field is: 2^256 - M | M | -1/M mod 2^64 (0 for 2^255 - 19, which is reduced its own
 ; way and has M = 2^256 - 38, twice the prime) | m - 2, the exponent that inverts.
+%ifdef HOST
 bdrain: ret                     ; (the tests have no device)
 echost: pushad                  ; (for the tests: C wants its registers back)
         call ecinit
