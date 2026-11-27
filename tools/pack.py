@@ -169,15 +169,23 @@ def main(site, out):
         made = []                           # (encoding, body)
         plain = page(b"200 OK", ctype, body)
         if env("COMPRESS", "1") != "0" and os.path.splitext(rel)[1].lower() not in PACKED and records(*plain) > 1:
-            worth = lambda packed: 10 * len(packed) <= 9 * len(body) and \
-                records(page(b"200 OK", ctype, packed, [b"Content-Encoding: gzip", b"Vary: Accept-Encoding", b"ETag: " + b"x" * ETAG_LEN])[0], packed) < records(*plain)
+            def wire_records(coding, packed):
+                head, _ = page(b"200 OK", ctype, packed, [b"Content-Encoding: " + coding,
+                                                            b"Vary: Accept-Encoding",
+                                                            b"ETag: " + b"x" * ETAG_LEN])
+                return records(head, packed)
+
+            def worth(coding, packed):
+                return 10 * len(packed) <= 9 * len(body) and wire_records(coding, packed) < records(*plain)
+
             packed = gzip.compress(body, compresslevel=9, mtime=0)
-            if worth(packed):
+            if worth(b"gzip", packed):
                 made.append((b"gzip", packed))
-                if brotli:
-                    packed = brotli(body)
-                    if len(packed) < len(made[0][1]):
-                        made.append((b"br", packed))
+            if brotli:
+                packed = brotli(body)
+                previous_records = wire_records(*made[-1]) if made else records(*plain)
+                if worth(b"br", packed) and wire_records(b"br", packed) < previous_records:
+                    made.append((b"br", packed))
         vary = [b"Vary: Accept-Encoding"] if made else []
         entries, info = [], {}
         for coding, data in [(None, body)] + made:
@@ -202,7 +210,7 @@ def main(site, out):
         if made:
             saved[0] += 1
             saved[1] += len(body)
-            saved[2] += len(made[-1][1])
+            saved[2] += min(len(data) for _, data in made)
         return n
     paths = {}          # request path -> response number
     files = []
@@ -214,7 +222,8 @@ def main(site, out):
     not_found = front = None
     for path in files:
         rel = os.path.relpath(path, site).replace(os.sep, "/")
-        body = open(path, "rb").read()
+        with open(path, "rb") as f:
+            body = f.read()
         if len(body) >= MAX_FILE:
             sys.exit(f"pack.py: {rel} is too large (the limit is 1 GiB)")
         url = "/" + quote(rel, safe="/~!$&'()*+,;=:@-._")

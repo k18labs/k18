@@ -48,5 +48,7 @@ jobs:
         run: sudo unshare -n -- tools/sitetest.sh tap
       - name: Check Python syntax
         run: python3 -m compileall -q tools test
+      - name: Test compressed response selection
+        run: python3 test/test_pack.py
       - name: Exercise CLI, certificate, and packaging workflows
         run: tools/k18test.sh
