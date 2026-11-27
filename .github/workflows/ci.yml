@@ -26,6 +26,13 @@ jobs:
           make B=build-ip6 CERT=cert IP6=fd00::15
       - name: Run crypto tests
         run: make test
+      - name: Check executable memory and RNG failure modes
+        run: tools/wxtest.sh
+      - name: Benchmark crypto and nonce generation
+        run: |
+          uname -m
+          grep -m1 'model name' /proc/cpuinfo
+          make bench
       - name: Test rawc neighbor lookup input handling
         run: python3 test/test_rawc.py
       - name: Check publish template dependency pins

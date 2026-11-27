@@ -619,6 +619,13 @@ Simplifications kept to save bytes. Ask before removing the ones about TLS.
   and copies them into the slot. The handshake scratch (transcript, key schedule, curve
   registers) is one per processor: one handshake at a time on each, start to finish,
   inside one call of `tcp`.
+- Randomness comes from an AES-128 CTR_DRBG without a derivation function. Each processor
+  seeds and reseeds it with 32 bytes from RDRAND, checks each raw qword against the previous
+  raw qword, and updates the DRBG after every Generate request. It reseeds before request 65.
+  The no-DF seed path assumes RDRAND supplies at least the 128 bits of entropy required for
+  AES-128 security strength. A failed RDRAND instruction retries indefinitely before returning
+  output; a repeated output traps. APs reseed after their BSS copy and mix their processor
+  number into the seed material, so they do not retain the boot processor's DRBG state.
 - Secrets are not wiped: the next handshake overwrites them, and unused nonces wait in
   the stock (the private key is in the same memory: data, never executed).
 - Executable pages hold, besides code, the loader's header, zeros, and `tramp`'s first

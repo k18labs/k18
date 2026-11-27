@@ -213,15 +213,178 @@ sign:   pushad
         popad
         ret
 
-; rand: ecx times 64 random bits to rdi (which moves on), from the processor's generator:
-; every secret there is but the key in the image. (Clobbers rax; ecx = 0 after.) Each is
-; compared with the one before it. A generator that says the same twice is stuck, and then
-; this is the machine's end: every nonce would be the same, which gives the key away. (That
-; rdrand says it succeeded proves nothing: a faulty one says so and gives all ones every
-; time. The first draw is compared with zero, which is what a generator stuck there would
-; say.)
-rand:   rdrand rax
-        jnc rand
+; A per-processor AES-128 CTR_DRBG state, in space not used by the network tables.
+DRBGK   equ NV + 224           ; Key, then V; AES-128 CTR_DRBG, no derivation function
+DRBGV   equ DRBGK + 16
+DRBGN   equ DRBGK + 32         ; Generate requests since the last reseed
+DRBGR   equ DRBGK + 36         ; 0 until initialized
+DRBGT   equ DRBGK + 48         ; Update's 32-byte temporary value
+DRBGS   equ DRBGK + 80         ; 256 bits from the hardware during init/reseed
+
+; Increment the 128-bit, big-endian CTR_DRBG V.
+hctr_inc:
+        mov rax, [DRBGV+8]
+        bswap rax
+        inc rax
+        bswap rax
+        mov [DRBGV+8], rax
+        jnz .done
+        mov rax, [DRBGV]
+        bswap rax
+        inc rax
+        bswap rax
+        mov [DRBGV], rax
+.done:  ret
+
+; CTR_DRBG_Update: AES(K, V+1) | AES(K, V+2), xor the optional provided_data, and
+; replace K and V. RSI is the provided_data pointer (0 means 32 zero bytes).
+hctr_update:
+        push rdi
+        push rsi
+        push rcx
+        push r8
+        push r9
+        mov r9, rsi
+        mov esi, DRBGK
+        call aeskey
+        jmp hctr_update_core
+hctr_update_keyed:
+        push rdi
+        push rsi
+        push rcx
+        push r8
+        push r9
+        mov r9, rsi
+hctr_update_core:
+        call hctr_inc
+        movdqa xmm0, [DRBGV]
+        call aessingle
+        movdqa [DRBGT], xmm0
+        call hctr_inc
+        movdqa xmm0, [DRBGV]
+        call aessingle
+        movdqa [DRBGT+16], xmm0
+        movdqa xmm0, [DRBGT]
+        test r9, r9
+        jz .zero1
+        movdqu xmm1, [r9]
+        pxor xmm0, xmm1
+.zero1: movdqa [DRBGK], xmm0
+        movdqa xmm0, [DRBGT+16]
+        test r9, r9
+        jz .zero2
+        movdqu xmm1, [r9+16]
+        pxor xmm0, xmm1
+.zero2: movdqa [DRBGV], xmm0
+        pxor xmm0, xmm0
+        movdqa [DRBGT], xmm0
+        movdqa [DRBGT+16], xmm0
+        pop r9
+        pop r8
+        pop rcx
+        pop rsi
+        pop rdi
+        ret
+
+; Seed or reseed from 256 fresh RDRAND bits. On first use K and V start at zero;
+; later calls use the existing state, as CTR_DRBG_Reseed requires.
+drbg_seed:
+        push rdi
+        push rcx
+        cmp dword [DRBGR], 0
+        jne .state
+        mov qword [DRBGK], 0
+        mov qword [DRBGK+8], 0
+        mov qword [DRBGV], 0
+        mov qword [DRBGV+8], 0
+.state: mov edi, DRBGS
+        push 4
+        pop rcx
+        call rand_hw
+        mov eax, [CPUN]         ; separate AP streams even if a broken source clones CPU output
+        xor [DRBGS+28], eax
+        mov esi, DRBGS
+        call hctr_update
+        mov dword [DRBGN], 0
+        mov dword [DRBGR], 1
+        pxor xmm0, xmm0
+        movdqa [DRBGS], xmm0
+        movdqa [DRBGS+16], xmm0
+        pop rcx
+        pop rdi
+        ret
+
+; Generate ecx qwords to rdi. V advances once per 16 output bytes; Update with
+; zero provided_data after every request. AES round keys are rebuilt from the new K.
+hctr_generate:
+        push r8
+        mov r8d, ecx
+        push rdi
+        mov esi, DRBGK
+        call aeskey
+        pop rdi
+.block: call hctr_inc
+        movdqa xmm0, [DRBGV]
+        call aessingle
+        movq [rdi], xmm0
+        add rdi, 8
+        dec r8d
+        jz .update
+        pextrq rax, xmm0, 1
+        mov [rdi], rax
+        add rdi, 8
+        dec r8d
+        jnz .block
+.update:
+        xor esi, esi
+        call hctr_update_keyed
+        xor ecx, ecx
+        pop r8
+        ret
+
+; rand: ecx qwords to rdi from the per-processor DRBG. The hardware source seeds it and
+; is checked on every reseed. A request is reseeded after at most 64 Generate calls.
+rand:   push rsi                ; the TLS caller reads its ClientHello after this call
+        sub rsp, 64            ; preserve the vector registers, as the old RDRAND loop did
+        movdqu [rsp], xmm0
+        movdqu [rsp+16], xmm1
+        movdqu [rsp+32], xmm2
+        movdqu [rsp+48], xmm5
+        cmp dword [DRBGR], 0
+        je .seed
+        cmp dword [DRBGN], 64
+        jb .gen
+.seed:  call drbg_seed
+.gen:   call hctr_generate
+        inc dword [DRBGN]
+        movdqu xmm0, [rsp]
+        movdqu xmm1, [rsp+16]
+        movdqu xmm2, [rsp+32]
+        movdqu xmm5, [rsp+48]
+        mov qword [rsp], 0
+        mov qword [rsp+8], 0
+        mov qword [rsp+16], 0
+        mov qword [rsp+24], 0
+        mov qword [rsp+32], 0
+        mov qword [rsp+40], 0
+        mov qword [rsp+48], 0
+        mov qword [rsp+56], 0
+        add rsp, 64
+        pop rsi
+        ret
+
+; Raw hardware entropy is used only to seed/reseed the DRBG. Each qword is compared with
+; the last hardware value; a repeated value means stop rather than continue with weak state.
+rand_hw:
+%ifdef WXTEST
+%if WXTEST = 13                 ; emulate an RDRAND instruction which never succeeds
+.stalled:
+        pause
+        jmp .stalled
+%endif
+%endif
+        rdrand rax
+        jnc rand_hw
 %ifdef WXTEST
 %if WXTEST = 8                  ; (make WXTEST=8, for tools/wxtest.sh: a generator that is
         or rax, -1              ; stuck at all ones)
@@ -231,7 +394,7 @@ rand:   rdrand rax
         je .stuck
         mov [RLAST], rax
         stosq
-        loop rand
+        loop rand_hw
         ret
 .stuck: ud2
 
@@ -969,7 +1132,7 @@ echost: pushad                  ; (for the tests: C wants its registers back)
         popad
         ret
 ; (for test/bench.c: one operation, or one program, in the field number ecx)
-        global select, cswap, hstep, hfmul, hfsqr, hfmul1, hfas, hfsub, hvm, hinv, F25519, HK, HKSET, POOLN, hstock, HAAD, HAADN
+        global select, cswap, hstep, hfmul, hfsqr, hfmul1, hfas, hfsub, hvm, hinv, F25519, HK, HKSET, POOLN, hstock, HAAD, HAADN, hctr_test_seed, hctr_test_generate, hrand_check
 HK      equ BSS + 0x18000       ; (nonces for the signatures after the next `stock`: see there)
 HKSET   equ HK + NPOOL * 32
 HAAD    equ HKSET + 16          ; (16 bytes to make a tag over in place of a record's header,
@@ -991,6 +1154,36 @@ haad:   movzx edx, byte [HAADN]
 hstock: pushad
         call stock
         popad
+        ret
+hctr_test_seed:
+        push rax
+        push rsi
+        mov qword [DRBGK], 0
+        mov qword [DRBGK+8], 0
+        mov qword [DRBGV], 0
+        mov qword [DRBGV+8], 0
+        mov dword [DRBGN], 0
+        mov dword [DRBGR], 1
+        mov rsi, rdi
+        call hctr_update
+        pop rsi
+        pop rax
+        ret
+hctr_test_generate:
+        push rax
+        push rsi
+        call hctr_generate
+        pop rsi
+        pop rax
+        ret
+hrand_check:
+        push rsi
+        mov esi, 0x12345678
+        call rand
+        xor eax, eax
+        cmp esi, 0x12345678
+        sete al
+        pop rsi
         ret
 hfield: imul ebp, ecx, FSIZE
         add ebp, F25519

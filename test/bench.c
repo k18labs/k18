@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <cpuid.h>
 #include <x86intrin.h>
 typedef unsigned char u8;
 #define SCRATCH "memory", "cc", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", \
@@ -10,12 +11,38 @@ typedef unsigned char u8;
                 "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
 #define ASMCALL(fn, ...) __asm__ volatile("call " #fn : __VA_ARGS__ : : SCRATCH)
 extern u8 E[], REGS[];
+static unsigned long long rlast;
+static int rdrand64(u8 *out){
+    unsigned long long x;
+    unsigned char ok;
+    for (int i = 0; i < 16; i++) {
+        __asm__ volatile("rdrand %0; setc %1" : "=r"(x), "=qm"(ok));
+        if (!ok) continue;
+        if (x == rlast) return 0;
+        rlast = x;
+        memcpy(out, &x, sizeof x);
+        return 1;
+    }
+    return 0;
+}
+static int rdrand4(u8 *out){
+    for (int i = 0; i < 4; i++)
+        if (!rdrand64(out + i * 8)) return 0;
+    return 1;
+}
+static int rdrand_ready(void){
+    u8 sample[32];
+    for (int i = 0; i < 16; i++)
+        if (!rdrand4(sample)) return 0;
+    return 1;
+}
 static double now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec/1e9;}
 #define TIME(name, n, ...) do { double t_ = now(); unsigned long long c_ = __rdtsc(); \
     for (i = 0; i < (n); i++) { __VA_ARGS__; } \
     c_ = __rdtsc() - c_; \
     printf("%-34s %8.2f us  %9llu cycles\n", name, (now() - t_) / (n) * 1e6, c_ / (n)); } while (0)
 int main(void){
+    setbuf(stdout, NULL);       /* keep the last completed timing visible if a later probe faults */
     mmap((void *)0x200000, 0x200000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     __asm__ volatile("call shaconst" ::: SCRATCH);
     static u8 u[32]={9}, pub[32], z[32], m[4096], h[32]; int i;
@@ -29,7 +56,21 @@ int main(void){
     TIME("sha256 of 64 bytes (2 blocks)", 20000, { u8 *o = h, *mm = m; unsigned n = 64; ASMCALL(sha256, "+D"(o), "+S"(mm), "+c"(n)); });
     TIME("sha256 of 3000 bytes", 2000, { u8 *o = h, *mm = m; unsigned n = 3000; ASMCALL(sha256, "+D"(o), "+S"(mm), "+c"(n)); });
     /* a record: of a small page, and a full one of a file (a segment of 1,440 bytes) */
-    static u8 kiv[44], rec[2048];
+    static u8 kiv[44], rec[2048], random[32], rngseed[32];
+    unsigned eax, ebx, ecx, edx;
+    if (__get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & bit_RDRND) && rdrand_ready()) {
+        int failed = 0;
+        TIME("random: four 64-bit values", 2000, if (!rdrand4(random)) failed++);
+        if (failed) printf("RDRAND sample failures: %d\n", failed);
+    }
+    else
+        puts("random: four 64-bit values       skipped (RDRAND unavailable)");
+    for (int j = 0; j < sizeof rngseed; j++) rngseed[j] = j;
+    {
+        u8 *seed = rngseed;
+        ASMCALL(hctr_test_seed, "+D"(seed));
+    }
+    TIME("random: CTR_DRBG four qwords", 2000, { u8 *p = random; unsigned n = 4; ASMCALL(hctr_test_generate, "+D"(p), "+c"(n)); });
     for (int len = 180; len <= 1418; len += 1238) {
         char t[64];
         sprintf(t, "AES-128-GCM record of %d bytes", len);
