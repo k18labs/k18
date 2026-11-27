@@ -344,7 +344,8 @@ hctr_generate:
 
 ; rand: ecx qwords to rdi from the per-processor DRBG. The hardware source seeds it and
 ; is checked on every reseed. A request is reseeded after at most 64 Generate calls.
-rand:   sub rsp, 64            ; preserve the vector registers, as the old RDRAND loop did
+rand:   push rsi                ; the TLS caller reads its ClientHello after this call
+        sub rsp, 64            ; preserve the vector registers, as the old RDRAND loop did
         movdqu [rsp], xmm0
         movdqu [rsp+16], xmm1
         movdqu [rsp+32], xmm2
@@ -369,6 +370,7 @@ rand:   sub rsp, 64            ; preserve the vector registers, as the old RDRAN
         mov qword [rsp+48], 0
         mov qword [rsp+56], 0
         add rsp, 64
+        pop rsi
         ret
 
 ; Raw hardware entropy is used only to seed/reseed the DRBG. Each qword is compared with
@@ -1130,7 +1132,7 @@ echost: pushad                  ; (for the tests: C wants its registers back)
         popad
         ret
 ; (for test/bench.c: one operation, or one program, in the field number ecx)
-        global select, cswap, hstep, hfmul, hfsqr, hfmul1, hfas, hfsub, hvm, hinv, F25519, HK, HKSET, POOLN, hstock, HAAD, HAADN, hctr_test_seed, hctr_test_generate
+        global select, cswap, hstep, hfmul, hfsqr, hfmul1, hfas, hfsub, hvm, hinv, F25519, HK, HKSET, POOLN, hstock, HAAD, HAADN, hctr_test_seed, hctr_test_generate, hrand_check
 HK      equ BSS + 0x18000       ; (nonces for the signatures after the next `stock`: see there)
 HKSET   equ HK + NPOOL * 32
 HAAD    equ HKSET + 16          ; (16 bytes to make a tag over in place of a record's header,
@@ -1173,6 +1175,15 @@ hctr_test_generate:
         call hctr_generate
         pop rsi
         pop rax
+        ret
+hrand_check:
+        push rsi
+        mov esi, 0x12345678
+        call rand
+        xor eax, eax
+        cmp esi, 0x12345678
+        sete al
+        pop rsi
         ret
 hfield: imul ebp, ecx, FSIZE
         add ebp, F25519

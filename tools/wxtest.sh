@@ -58,7 +58,7 @@ run() {
   served=no
   for _ in $(seq 1 40); do
     kill -0 $pid 2>/dev/null || break
-    if "${CURL[@]}" -o /dev/null "$URL"; then served=yes; break; fi
+    if "${CURL[@]}" --connect-timeout 0.25 --max-time 0.5 -o /dev/null "$URL"; then served=yes; break; fi
     sleep 0.25
   done
   # how it ended: by itself and without a word (the machine started over: -no-reboot), or not at all, or as a QEMU that could not run

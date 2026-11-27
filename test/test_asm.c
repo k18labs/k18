@@ -111,6 +111,18 @@ int main(int argc, char **argv)
         ASMCALL(hctr_test_generate, "+D"(p), "+c"(n));
         hex("drbg176", rngout, 176);
     }
+    seedp = rngseed;
+    ASMCALL(hctr_test_seed, "+D"(seedp));
+    {
+        u8 *p = rngout;
+        unsigned n = 4;
+        unsigned long preserved;
+        ASMCALL(hrand_check, "+D"(p), "+c"(n), "=a"(preserved));
+        if (preserved != 1 || n != 0 || p != rngout + 32) {
+            fputs("rand caller-register contract failed\n", stderr);
+            return 1;
+        }
+    }
     for (i = 0; i < sizeof lens / sizeof *lens; i++) {
         char t[32];
         memcpy(tmp, m, lens[i]);
