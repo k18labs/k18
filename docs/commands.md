@@ -39,6 +39,11 @@ docs/server.md. Everything it makes is readable by its owner only (umask 077).
   (the private CA's certificate lasts until 2049). `--staging`: Let's Encrypt's test
   server; the final check then fetches without verifying.
 
+`--rescue`, `--boot`, and `--reset` are trusted operator command strings. k18 executes them
+through the local shell, with the permissions of the user running k18. Use only commands you
+review and trust; do not build these options from network data, pull-request text, or other
+untrusted input. Automation should use fixed, reviewed command strings.
+
 ## Building
 
 - `make` assembles `src/os.asm` into `build/os.bin` and `build/disk.img` with the site

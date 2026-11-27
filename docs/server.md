@@ -47,6 +47,10 @@ entered and left, which `./k18 publish`, `deploy` and `renew` are told:
 - `--boot 'COMMAND'` boots it from its disk, where `reboot` in the rescue system does not.
 - `--disk DEVICE`: the machine's disk, where the rescue system sees more than one.
 
+The `COMMAND` values for `--rescue`, `--boot`, and `--reset` run through the local shell as
+the user running k18. Treat them as trusted code: use fixed commands you have reviewed, and
+never pass network, pull-request, or other untrusted text into these options.
+
 Steps (`k18`: `live`, `rescue`, `itself`, `write`, `up`):
 1. `publish` fetches the certificate the site shows and verifies it as a browser would
    (except its dates). If there is none (three tries), the machine is not touched:

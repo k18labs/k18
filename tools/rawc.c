@@ -31,8 +31,14 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+/* Override in test builds; production does not resolve this command through PATH. */
+#ifndef K18_IP_PATH
+#define K18_IP_PATH "/usr/sbin/ip"
+#endif
 
 enum { NEW, SYN, REQ, IDLE, FIN, DONE, FAILED };
 typedef struct {
@@ -255,6 +261,51 @@ static void close_(uint32_t i, uint32_t t) {
     tx(i, 0x11, isn(i) + 1 + C[i].reqs * QLEN, C[i].iss + 1 + C[i].reqs * rlen, NULL, 0);
 }
 
+/* Keep the neighbor lookup out of a shell; address is already a canonical IPv4 string. */
+static int neighbor_line(const char *address, char *line, size_t size) {
+    int pfd[2];
+    if (pipe(pfd) < 0) return -1;
+    pid_t child = fork();
+    if (child < 0) {
+        int err = errno;
+        close(pfd[0]);
+        close(pfd[1]);
+        errno = err;
+        return -1;
+    }
+    if (child == 0) {
+        close(pfd[0]);
+        if (dup2(pfd[1], STDOUT_FILENO) < 0) _exit(126);
+        close(pfd[1]);
+        execl(K18_IP_PATH, "ip", "neigh", "show", address, (char *)NULL);
+        _exit(127);
+    }
+
+    close(pfd[1]);
+    FILE *out = fdopen(pfd[0], "r");
+    if (!out) {
+        int err = errno;
+        close(pfd[0]);
+        int status;
+        while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+        errno = err;
+        return -1;
+    }
+    int have_line = fgets(line, size, out) != NULL;
+    int read_error = ferror(out);
+    fclose(out);
+
+    int status;
+    pid_t waited;
+    do waited = waitpid(child, &status, 0); while (waited < 0 && errno == EINTR);
+    if (waited < 0) return -1;
+    if (!have_line || read_error || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) return fprintf(stderr, "usage: rawc N [W]\n"), 2;
     N = strtoul(argv[1], 0, 0);
@@ -278,12 +329,16 @@ int main(int argc, char **argv) {
     if (rlen < 1 || rlen > 1400) return fprintf(stderr, "%s: a response of one segment is all this client knows\n", cmd), 2;
 
     const char *via = (e = getenv("VIA")) ? e : guest;
-    snprintf(cmd, sizeof cmd, "ip neigh show %s", via);
-    f = popen(cmd, "r");
-    if (!f || !fgets(line, sizeof line, f) || !strstr(line, "lladdr")) return fprintf(stderr, "no neighbour entry for %s\n", via), 2;
-    pclose(f);
+    struct in_addr via_addr;
+    char via_ip[INET_ADDRSTRLEN];
+    if (inet_pton(AF_INET, via, &via_addr) != 1)
+        return fprintf(stderr, "invalid VIA IPv4 address: %s\n", via), 2;
+    if (!inet_ntop(AF_INET, &via_addr, via_ip, sizeof via_ip)) return perror("inet_ntop"), 2;
+    if (neighbor_line(via_ip, line, sizeof line) < 0 || !strstr(line, "lladdr"))
+        return fprintf(stderr, "no neighbour entry for %s\n", via), 2;
     unsigned m[6];
-    sscanf(strstr(line, "lladdr") + 7, "%x:%x:%x:%x:%x:%x", m, m + 1, m + 2, m + 3, m + 4, m + 5);
+    if (sscanf(strstr(line, "lladdr") + 7, "%2x:%2x:%2x:%2x:%2x:%2x", m, m + 1, m + 2, m + 3, m + 4, m + 5) != 6)
+        return fprintf(stderr, "invalid neighbour entry for %s\n", via), 2;
     for (int k = 0; k < 6; k++) mac_dst[k] = m[k];
 
     fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_IP));
