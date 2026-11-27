@@ -68,7 +68,13 @@ for i, n in enumerate((1, 100, 1500, 15, 16, 17, 63, 64, 65, 128)):
     exp[f"ungcm{n}_{seq}"] = m[:n] + exp[f"gcm{n}_{seq}"][-16:]   # decrypted again, and its tag
 
 got = {}
-for line in subprocess.run([sys.argv[1]], capture_output=True, text=True, check=True).stdout.splitlines():
+try:
+    asm_output = subprocess.run([sys.argv[1]], capture_output=True, text=True, check=True).stdout
+except subprocess.CalledProcessError as failure:
+    sys.stderr.write(failure.stdout or "")
+    sys.stderr.write(failure.stderr or "")
+    raise
+for line in asm_output.splitlines():
     tag, val = line.split()
     got[tag] = bytes.fromhex(val)
 
