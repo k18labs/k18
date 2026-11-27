@@ -179,7 +179,8 @@ hmac:
         lodsb
 .z:     xor al, 0x36
         stosb
-        loop .k
+        dec ecx
+        jnz .k
         pop rcx
         add ecx, 64
         mov esi, HB
