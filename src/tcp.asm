@@ -476,7 +476,16 @@ tcp:
         je .resend              ; outstanding: a segment of ours is missing
         cmp [rbx+P_MORE], bl
         jne .ack
-        jmp .quiet
+        cmp [rbx+P_PORTS+2], bl ; a small port-80 response can leave a pipelined request
+        jne .quiet              ; in oohold without P_MORE; release it on this ack
+        xor ebx, ebx
+        call ooent
+        jne .quiet
+        mov eax, [rbp+C_NXT]
+        sub eax, [rdx+OO_SEQ]
+        js .quiet
+        mov edi, OB
+        jmp .reply
 
 .new:   mov edi, OB             ; edi = end of our answer
 .more:  add [rbp+C_NXT], ecx    ; ecx new bytes at esi, in order
