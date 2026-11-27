@@ -77,8 +77,10 @@ when needed:
 ## What "secure" means here
 A validating client gets server authentication, confidentiality, integrity and forward
 secrecy against a network attacker, and no packet makes the server leak its key:
-- a fresh X25519 secret, ECDSA nonce and server random per handshake, from `rdrand`.
-  Each draw is compared with the one before (`rand`); a stuck generator ends the machine
+- a fresh X25519 secret, ECDSA nonce and server random per handshake, from a per-processor
+  AES-128 CTR_DRBG seeded from `rdrand`, then updated after each request and reseeded every
+  64 requests. Raw hardware qwords are compared with the previous one (`rand_hw`); repeats
+  trap and a source that never succeeds stalls before that reseed returns output
 - ECDSA nonces are made 64 at a time per processor and each is used once (`stock`). A
   nonce used twice gives the key away: keep it that way
 - the key exists only in the image and, on a machine written from its rescue system, in

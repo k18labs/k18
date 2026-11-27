@@ -42,9 +42,10 @@ tests k18 on pushes and pull requests.
   for every handshake, forward secrecy for every connection. The curve arithmetic and
   ciphers do not branch on or index with secrets, checked with Valgrind with every
   secret marked undefined. The crypto passes Project Wycheproof's vectors, and the
-  image passes tlsfuzzer (1,300 conversations). Randomness comes from `rdrand`; each
-  draw is compared with the previous one, and a stuck generator stops the machine
-  before it signs anything. Port 80 only redirects.
+  image passes tlsfuzzer (1,300 conversations). Randomness comes from a per-processor
+  AES-128 CTR_DRBG seeded and periodically reseeded with `rdrand`; repeated hardware
+  output traps, and a source that stops succeeding cannot produce output from a reseed.
+  Port 80 only redirects.
 - **Cheap connections.** A TLS connection costs 128 bytes, however large the file: sent
   data is never stored, it is rebuilt from the image if lost. A SYN from an address that
   does not answer costs nothing, and a client that vanishes mid-file is dropped after a
