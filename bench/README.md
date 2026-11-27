@@ -5,15 +5,17 @@ and Caddy do on the same server type with the same page, key and certificate.
 
 | on a 2-vCPU cloud server | k18 | nginx + BoringSSL | nginx + OpenSSL 3.5 | Caddy 2.6 |
 |---|---|---|---|---|
-| new TLS 1.3 connections a second (full handshake) | 10,000 - 11,100 (1) | 3,900 - 4,100 | 2,100 - 2,200 | 1,700 - 1,850 |
-| HTTPS requests a second, connections kept | 109,000 - 122,000 (2) | 47,000 - 48,000 | 37,000 - 40,000 | 9,000 - 12,000 |
+| new TLS 1.3 connections a second (full handshake) | 13,200 - 14,300 (1) | 3,900 - 4,100 | 2,100 - 2,200 | 1,700 - 1,850 |
+| HTTPS requests a second, connections kept | 109,000 - 130,000 (2) | 47,000 - 48,000 | 37,000 - 40,000 | 9,000 - 12,000 |
 | new plain HTTP connections a second | 30,000 - 35,000 (2) | 17,000 - 22,000 | 16,000 - 22,000 | 7,000 - 8,000 |
-| HTTP requests a second, connections kept | 110,000 - 128,000 (2) | 60,000 - 71,000 | 58,000 - 68,000 | 14,000 |
+| HTTP requests a second, connections kept | 113,000 - 141,000 (2) | 60,000 - 71,000 | 58,000 - 68,000 | 14,000 |
 | memory per held connection: plain, TLS | 24 bytes, 128 bytes | 3.2 KiB, 7.1 KiB | 4.0 KiB, 25.8 KiB | not measured |
-| what has to be on the disk | 11,094 bytes (3) | 3.6 MB + a kernel (17 MB) | 9.1 MB + a kernel | 39 MB + a kernel |
+| what has to be on the disk | 15,785 bytes (3) | 3.6 MB + a kernel (17 MB) | 9.1 MB + a kernel | 39 MB + a kernel |
 
-(1) At 512 to 4,096 connections in flight; 8,750 to 9,890 at 64. Measured on a later
-night than the nginx and Caddy columns, on the same server type (a Skylake cx23).
+(1) At 512 to 4,096 connections in flight; 11,000 to 12,000 at 64. The k18 column was
+measured on 2026-11-27, later than the nginx and Caddy columns, on the same server type
+(a Skylake cx23); the earlier image did 10,000 to 11,100 (the handshake has got cheaper
+since).
 
 (2) Not k18's limit: the server's network path carries about 130,000 frames a second each
 way, and k18's processors are 80 to 89% idle at that point ("What limits whom"). The
@@ -68,27 +70,28 @@ Connections or requests a second; in brackets the median and 99th percentile in 
 
 | | in flight | k18 | nginx + BoringSSL | nginx + OpenSSL | Caddy |
 |---|---|---|---|---|---|
-| HTTPS, a new connection each | 64 | 8,750 - 9,890 (1) | 3,884 (15.0, 42.2) | 2,229 (26.5, 70.6) | 1,836 (34.1, 66.4) |
-| | 512 | 10,010 - 11,130 (1) | 3,887 (102, 347) | 2,086 (208, 571) | 1,846 (266, 508) |
-| | 4,096 | 10,330 - 11,230 (1) | 4,114 (850, over 2,000) | 2,199 (1,811, over 2,000) | 1,743 (over 2,000) |
-| the same, two key shares as a browser sends | 512 | 9,101 (52.7, 133) (2) | 3,817 (132, 337) | 2,477 (205, 460) | |
-| HTTPS, connections kept | 64 | 109,360 (0.55, 1.24) | 46,906 (1.27, 3.11) | 39,572 (1.54, 3.48) | 12,336 (4.36, 17.3) |
-| | 512 | 122,357 (4.02, 6.43) | 48,247 (10.3, 18.4) | 36,842 (13.7, 21.3) | 8,800 (53.8, 145) |
-| HTTP, a new connection each | 64 | 29,938 (1.94, 4.93) | 17,487 (3.16, 9.88) | 15,550 (3.47, 11.6) | 6,808 (9.09, 20.9) |
-| | 512 | 35,428 (13.8, 19.7) | 22,281 (18.1, 61.5) | 21,148 (19.6, 65.6) | 7,283 (70.5, 129) |
-| | 4,096 | 34,455 (62.7, 1,110) | 21,706 (102, 1,323) | 21,940 (48.1, 1,320) | 7,780 (529, 1,441) |
-| HTTP, connections kept | 64 | 110,280 (0.55, 1.22) | 59,815 (1.01, 2.67) | 58,370 (1.02, 2.57) | 14,084 (3.81, 15.3) |
-| | 512 | 128,404 (3.86, 5.38) | 70,560 (6.64, 16.0) | 67,621 (7.09, 16.6) | 14,427 (34.3, 69.9) |
+| HTTPS, a new connection each | 64 | 10,980 - 11,990 (1) (5.3, 12.9) | 3,884 (15.0, 42.2) | 2,229 (26.5, 70.6) | 1,836 (34.1, 66.4) |
+| | 512 | 13,620 - 14,120 (1) (35.4, 86.6) | 3,887 (102, 347) | 2,086 (208, 571) | 1,846 (266, 508) |
+| | 4,096 | 13,230 - 14,290 (1) (277, 545) | 4,114 (850, over 2,000) | 2,199 (1,811, over 2,000) | 1,743 (over 2,000) |
+| the same, two key shares as a browser sends | 512 | 12,036 (41.0, 84.0) | 3,817 (132, 337) | 2,477 (205, 460) | |
+| HTTPS, connections kept | 64 | 109,163 (0.56, 1.17) | 46,906 (1.27, 3.11) | 39,572 (1.54, 3.48) | 12,336 (4.36, 17.3) |
+| | 512 | 130,238 (3.55, 6.83) | 48,247 (10.3, 18.4) | 36,842 (13.7, 21.3) | 8,800 (53.8, 145) |
+| HTTP, a new connection each | 64 | 31,658 (2.04, 3.12) | 17,487 (3.16, 9.88) | 15,550 (3.47, 11.6) | 6,808 (9.09, 20.9) |
+| | 512 | 34,471 (14.0, 20.7) | 22,281 (18.1, 61.5) | 21,148 (19.6, 65.6) | 7,283 (70.5, 129) |
+| | 4,096 | 34,135 (97.9, 1,066) | 21,706 (102, 1,323) | 21,940 (48.1, 1,320) | 7,780 (529, 1,441) |
+| HTTP, connections kept | 64 | 112,608 (0.55, 1.21) | 59,815 (1.01, 2.67) | 58,370 (1.02, 2.57) | 14,084 (3.81, 15.3) |
+| | 512 | 140,754 (3.49, 6.58) | 70,560 (6.64, 16.0) | 67,621 (7.09, 16.6) | 14,427 (34.3, 69.9) |
 
-(1) Lowest to highest of six runs, on a later night, same server type; latencies not
-recorded. (2) Measured before the curve code was made faster; not measured since.
+(1) Lowest to highest of six runs; the latencies are from the middle of the six. The
+whole k18 column is of 2026-11-27, the other columns of an earlier night, same server
+type.
 
-No errors. No timeouts, except k18 in the 4,096 row of plain HTTP: 83 of 517,000
+No errors. No timeouts, except k18 in the 4,096 row of plain HTTP: 7 of 512,000
 connections ("More in flight than can be served"). The HTTP rows of the two nginx
 columns are the same nginx doing the same work without TLS: they show how much a row
 moves between runs.
 
-Per new TLS connection, of both processors' time: k18 about 400,000 cycles, nginx with
+Per new TLS connection, of both processors' time: k18 about 300,000 cycles, nginx with
 BoringSSL 1.0 million, with OpenSSL 1.9 million, Caddy 2.3 million.
 
 k18's curve arithmetic is somewhat faster than OpenSSL's, but most of the gain is
@@ -114,8 +117,8 @@ Skylake server, 41 on an EPYC-Milan. A handshake draws twelve: 42,000 cycles on 
 - nginx and Caddy: their processors (`vmstat` on the server: 0 to 6% idle in every row).
 - k18, new TLS connections: its processors (2 to 5% idle; a `DEBUG=2` image and
   `bench/busy.sh`).
-- k18, everything else: the network path. With connections kept it levels off at about
-  130,000 requests a second, with new plain connections at 35,000 (140,000 frames a
+- k18, everything else: the network path. With connections kept it levels off at
+  130,000 to 141,000 requests a second, with new plain connections at 35,000 (140,000 frames a
   second in), and its processors are 80 to 89% idle. Two load generators at once get the
   same total (59,900 + 64,700 requests a second). k18 on one processor gets the same
   (133,000 HTTP requests a second at 15% busy, 126,000 HTTPS at 28%: 2,400 and 4,800
@@ -129,8 +132,8 @@ Skylake server, 41 on an EPYC-Milan. A handshake draws twelve: 42,000 cycles on 
 4,096 connections in flight is more than any of the four can serve in under half a
 second.
 - k18 lets frames wait in its rings (16,384 frames per processor). New TLS connections at
-  4,096 in flight: over six runs the median was 0.33 to 0.53 s and the 99th percentile
-  0.8 to 1.6 s; none took over 10 s, and an image that counts found no frame lost. At
+  4,096 in flight: over six runs the median was 0.27 to 0.28 s and the 99th percentile
+  0.52 to 0.55 s; none took over 10 s, and an image that counts found no frame lost. At
   16,384 in flight the rings overflow: 245 of 100,000 over 10 s, median 1.6 s.
 - nginx lets them wait in the kernel's queues: median 0.85 s (BoringSSL) and 1.8 s
   (OpenSSL), none over 10 s.
