@@ -68,6 +68,14 @@ int main(void){
     for (int j = 0; j < sizeof rngseed; j++) rngseed[j] = j;
     {
         u8 *seed = rngseed;
+        fputs("bench: CTR_DRBG seed begin\n", stderr);
+        ASMCALL(hctr_test_seed, "+D"(seed));
+        fputs("bench: CTR_DRBG seed done\n", stderr);
+        u8 *p = random;
+        unsigned n = 4;
+        ASMCALL(hctr_test_generate, "+D"(p), "+c"(n));
+        fputs("bench: CTR_DRBG probe done\n", stderr);
+        seed = rngseed;
         ASMCALL(hctr_test_seed, "+D"(seed));
     }
     TIME("random: CTR_DRBG four qwords", 2000, { u8 *p = random; unsigned n = 4; ASMCALL(hctr_test_generate, "+D"(p), "+c"(n)); });
