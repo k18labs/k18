@@ -20,6 +20,10 @@ jobs:
             brotli qemu-system-x86 iproute2 iptables libc6-dbg
       - name: Build image
         run: make
+      - name: Build fixed IPv4 and IPv6 variants
+        run: |
+          make B=build-ip CERT=cert IP=192.0.2.15
+          make B=build-ip6 CERT=cert IP6=fd00::15
       - name: Run crypto tests
         run: make test
       - name: Check reproducible generated image data

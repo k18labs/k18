@@ -31,7 +31,9 @@ seal:   pushad
         movd xmm0, eax
         paddd xmm4, xmm0        ; 2, for the first block of key stream
         pxor xmm0, xmm0
-        mov r8, 0xC200000000000000
+        push -62
+        pop r8
+        shl r8, 56
         movq xmm6, r8
         call aes4               ; H = AES(0), and what the tag's hash is masked with
         movdqa [TAGM], xmm1
@@ -86,7 +88,9 @@ seal_cached:
         pxor xmm0, xmm0
         call aes4
         movdqa [TAGM], xmm1
-        mov r8, 0xC200000000000000
+        push -62
+        pop r8
+        shl r8, 56
         movq xmm6, r8
         jmp seal_sb
 
@@ -234,7 +238,7 @@ gh1:    pxor xmm1, xmm1
         jmp .gm
 .gn:    movdqa xmm0, [rsi]
         pshufb xmm0, xmm7
-.gm:    add rsi, 16
+.gm:    add esi, 16             ; SB is below 4 GiB
         sub eax, 16
         movdqa xmm5, xmm0
         pclmulqdq xmm5, [rbx+rax], 0x00

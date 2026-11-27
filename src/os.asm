@@ -537,11 +537,12 @@ shaconst:
 %include "tls.asm"          ; `handshake`: the ClientHello, and our flight
 %endif
 
-%include "sha.asm"          ; `keys`, `sha256`, `hmac`, `expand`
-
+; Keep the standalone routine groups in this order to reduce padding before HOT entries.
 %include "curves.asm"       ; `xdh`, `sign`, `rand`, `stock`, and the arithmetic under them
 
 %include "aesgcm.asm"       ; `seal`: AES-128-GCM
+
+%include "sha.asm"          ; `keys`, `sha256`, `hmac`, `expand`
 
 %ifndef HOST
 ; Another processor starts here, in real mode (at TRAMP, where this is copied to: here it
