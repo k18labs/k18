@@ -10,6 +10,7 @@ typedef unsigned char u8;
                 "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
 #define ASMCALL(fn, ...) __asm__ volatile("call " #fn : __VA_ARGS__ : : SCRATCH)
 extern u8 E[], REGS[];
+extern void hrand(void);
 static double now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec/1e9;}
 #define TIME(name, n, ...) do { double t_ = now(); unsigned long long c_ = __rdtsc(); \
     for (i = 0; i < (n); i++) { __VA_ARGS__; } \
@@ -29,7 +30,8 @@ int main(void){
     TIME("sha256 of 64 bytes (2 blocks)", 20000, { u8 *o = h, *mm = m; unsigned n = 64; ASMCALL(sha256, "+D"(o), "+S"(mm), "+c"(n)); });
     TIME("sha256 of 3000 bytes", 2000, { u8 *o = h, *mm = m; unsigned n = 3000; ASMCALL(sha256, "+D"(o), "+S"(mm), "+c"(n)); });
     /* a record: of a small page, and a full one of a file (a segment of 1,440 bytes) */
-    static u8 kiv[44], rec[2048];
+    static u8 kiv[44], rec[2048], random[32];
+    TIME("random: four 64-bit values", 2000, { u8 *p = random; unsigned n = 4; ASMCALL(hrand, "+D"(p), "+c"(n)); });
     for (int len = 180; len <= 1418; len += 1238) {
         char t[64];
         sprintf(t, "AES-128-GCM record of %d bytes", len);

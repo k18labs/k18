@@ -969,7 +969,7 @@ echost: pushad                  ; (for the tests: C wants its registers back)
         popad
         ret
 ; (for test/bench.c: one operation, or one program, in the field number ecx)
-        global select, cswap, hstep, hfmul, hfsqr, hfmul1, hfas, hfsub, hvm, hinv, F25519, HK, HKSET, POOLN, hstock, HAAD, HAADN
+        global select, cswap, hstep, hfmul, hfsqr, hfmul1, hfas, hfsub, hvm, hinv, F25519, HK, HKSET, POOLN, hstock, hrand, HAAD, HAADN
 HK      equ BSS + 0x18000       ; (nonces for the signatures after the next `stock`: see there)
 HKSET   equ HK + NPOOL * 32
 HAAD    equ HKSET + 16          ; (16 bytes to make a tag over in place of a record's header,
@@ -992,6 +992,7 @@ hstock: pushad
         call stock
         popad
         ret
+hrand:  jmp rand               ; test/bench: the same RNG entry the image uses
 hfield: imul ebp, ecx, FSIZE
         add ebp, F25519
         ret
