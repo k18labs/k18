@@ -287,6 +287,23 @@ def framewise(s, mac):
         else:
             ok, g = gone(c, c.iss + 1 + n, sent, b"\n")
             check(f"port 80: while our acks hold the client's last byte back, a RST {what} is the connection's end", ok, show(g))
+    c = Raw(s, mac, 80)
+    ok, g = c.taken(req, begins=b"HTTP/1.1 ")
+    first = b"".join(d for _, _, _, d in g)
+    single = ok and len(g) == 1 and 0 < len(first) <= 1460
+    if single:
+        ours = c.iss + 1 + upto(c, g)
+        c.seq += len(req)
+        second_seq = c.seq
+        c.send(0x18, c.iss + 1, req, seq=second_seq)
+        c.got(0.05)
+        c.send(0x10, ours, seq=second_seq)
+        resumed = c.got(0.3)
+        body = b"".join(d for _, _, _, d in resumed)
+        check("port 80: a pipelined request resumes as soon as the one-segment response is acknowledged",
+              body.startswith(b"HTTP/1.1 "), show(resumed))
+    else:
+        check("port 80: pipeline setup gets a one-segment first response", False, show(g))
     c = Raw(s, mac, 443)
     ok, g = c.refused(0x18, c.iss + 1 + 5000, bytes([22, 3, 1, 0, 200]) + bytes(60))
     check("port 443: bytes whose ack is not the client's get an ack and nothing else", ok, show(g))
