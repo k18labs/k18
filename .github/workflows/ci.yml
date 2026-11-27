@@ -38,6 +38,12 @@ jobs:
         run: sudo unshare -n -- tools/tlsfuzz.sh
       - name: Check TCP acknowledgement and pipelining cases
         run: sudo unshare -n -- ./tap.sh python3 tools/acktest.py
+      - name: Build IPv6 protocol test image
+        run: |
+          python3 tools/mksite.py build-site6/www 1.5
+          make B=build-site6 SITE=build-site6/www IP6=fd00:15::15
+      - name: Check IPv6 SYN MSS and packet handling
+        run: sudo unshare -n -- env B=build-site6 ./tap.sh python3 tools/v6test.py
       - name: Exercise multi-record site responses
         run: sudo unshare -n -- tools/sitetest.sh tap
       - name: Check Python syntax

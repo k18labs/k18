@@ -8,8 +8,8 @@ What a neighbour gets who asks for our address: the advertisement, as RFC 4861 h
 address in its option, its checksum right). What gets nothing: a question for another
 address, one that has passed a router (hop limit 254), one with a wrong checksum, one
 cut short, one from nobody ("::": is this address free?), an echo request, a router's
-advertisement. A SYN gets its SYN-ACK (hop limit 64, the checksum right, the same
-options as over IPv4) from our address and no other: not one sent to another address at
+advertisement. A SYN gets its SYN-ACK (hop limit 64, MSS 1220, the checksum right) from
+our address and no other: not one sent to another address at
 our card's, not one behind another header (hop by hop), not a fragment, not one with a
 wrong checksum or of another version. A file of many segments comes in records of 1220
 bytes at most (a record is a segment: with its headers that is 1280 bytes, which every
@@ -242,9 +242,9 @@ f = answer(syn(sport=40000, seq=1000), want=sa)
 check("a SYN gets its SYN-ACK", f is not None)
 if f:
     t = f[54:]
-    check("  from our address, 64 hops, no flow label, acknowledging the SYN, a segment may hold 1440 bytes",
+    check("  from our address, 64 hops, no flow label, acknowledging the SYN, a segment may hold 1220 bytes",
           (f[14:18], f[21], f[22:38], f[38:54], t[0:4], t[8:12], t[20:24]) ==
-          (b"\x60\0\0\0", 64, OURS, ME, struct.pack(">HH", 443, 40000), struct.pack(">I", 1001), bytes([2, 4, 5, 160])), f.hex())
+          (b"\x60\0\0\0", 64, OURS, ME, struct.pack(">HH", 443, 40000), struct.pack(">I", 1001), bytes([2, 4, 4, 196])), f.hex())
     check("  its checksum right", csum(f[22:54] + struct.pack(">IHBB", len(t), 0, 0, 6) + t) == 0)
 for port, (what, how) in enumerate((
         ("one for another address at our card's", dict(dst=other)),
