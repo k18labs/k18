@@ -42,6 +42,7 @@ static double now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);retu
     c_ = __rdtsc() - c_; \
     printf("%-34s %8.2f us  %9llu cycles\n", name, (now() - t_) / (n) * 1e6, c_ / (n)); } while (0)
 int main(void){
+    setbuf(stdout, NULL);       /* keep the last completed timing visible if a later probe faults */
     mmap((void *)0x200000, 0x200000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     __asm__ volatile("call shaconst" ::: SCRATCH);
     static u8 u[32]={9}, pub[32], z[32], m[4096], h[32]; int i;
