@@ -1154,6 +1154,8 @@ hstock: pushad
         popad
         ret
 hctr_test_seed:
+        push rax
+        push rsi
         mov qword [DRBGK], 0
         mov qword [DRBGK+8], 0
         mov qword [DRBGV], 0
@@ -1162,9 +1164,15 @@ hctr_test_seed:
         mov dword [DRBGR], 1
         mov rsi, rdi
         call hctr_update
+        pop rsi
+        pop rax
         ret
 hctr_test_generate:
+        push rax
+        push rsi
         call hctr_generate
+        pop rsi
+        pop rax
         ret
 hfield: imul ebp, ecx, FSIZE
         add ebp, F25519

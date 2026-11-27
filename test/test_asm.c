@@ -86,35 +86,28 @@ int main(int argc, char **argv)
     if (argc > 1) return commands();
     for (i = 0; i < sizeof m; i++) m[i] = i * 7 + 3;
     for (i = 0; i < sizeof rngseed; i++) rngseed[i] = i;
-    fputs("drbg: seed 1\n", stderr);
     ASMCALL(hctr_test_seed, "+D"(seedp));
     {
         u8 *p = rngout;
         unsigned n = 4;
-        fputs("drbg: generate 1\n", stderr);
         ASMCALL(hctr_test_generate, "+D"(p), "+c"(n));
         p = rngout + 32, n = 4;
-        fputs("drbg: generate 2\n", stderr);
         ASMCALL(hctr_test_generate, "+D"(p), "+c"(n));
         hex("drbg64", rngout, 64);
     }
     seedp = rngseed;
-    fputs("drbg: seed 2\n", stderr);
     ASMCALL(hctr_test_seed, "+D"(seedp));
     {
         u8 *p = rngout;
         unsigned n = 3;
-        fputs("drbg: generate 24\n", stderr);
         ASMCALL(hctr_test_generate, "+D"(p), "+c"(n));
         hex("drbg24", rngout, 24);
     }
     seedp = rngseed;
-    fputs("drbg: seed 3\n", stderr);
     ASMCALL(hctr_test_seed, "+D"(seedp));
     {
         u8 *p = rngout;
         unsigned n = 22;
-        fputs("drbg: generate 176\n", stderr);
         ASMCALL(hctr_test_generate, "+D"(p), "+c"(n));
         hex("drbg176", rngout, 176);
     }
