@@ -992,7 +992,6 @@ hstock: pushad
         call stock
         popad
         ret
-hrand:  jmp rand               ; test/bench: the same RNG entry the image uses
 hfield: imul ebp, ecx, FSIZE
         add ebp, F25519
         ret

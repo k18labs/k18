@@ -11,14 +11,29 @@ typedef unsigned char u8;
                 "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
 #define ASMCALL(fn, ...) __asm__ volatile("call " #fn : __VA_ARGS__ : : SCRATCH)
 extern u8 E[], REGS[];
-extern void hrand(void);
-static int rdrand_ready(void){
+static unsigned long long rlast;
+static int rdrand64(u8 *out){
+    unsigned long long x;
+    unsigned char ok;
     for (int i = 0; i < 16; i++) {
-        unsigned long long x;
-        unsigned char ok;
         __asm__ volatile("rdrand %0; setc %1" : "=r"(x), "=qm"(ok));
-        if (!ok) return 0;
+        if (!ok) continue;
+        if (x == rlast) return 0;
+        rlast = x;
+        memcpy(out, &x, sizeof x);
+        return 1;
     }
+    return 0;
+}
+static int rdrand4(u8 *out){
+    for (int i = 0; i < 4; i++)
+        if (!rdrand64(out + i * 8)) return 0;
+    return 1;
+}
+static int rdrand_ready(void){
+    u8 sample[32];
+    for (int i = 0; i < 16; i++)
+        if (!rdrand4(sample)) return 0;
     return 1;
 }
 static double now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec/1e9;}
@@ -42,8 +57,11 @@ int main(void){
     /* a record: of a small page, and a full one of a file (a segment of 1,440 bytes) */
     static u8 kiv[44], rec[2048], random[32];
     unsigned eax, ebx, ecx, edx;
-    if (__get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & bit_RDRND) && rdrand_ready())
-        TIME("random: four 64-bit values", 2000, { u8 *p = random; unsigned n = 4; ASMCALL(hrand, "+D"(p), "+c"(n)); });
+    if (__get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & bit_RDRND) && rdrand_ready()) {
+        int failed = 0;
+        TIME("random: four 64-bit values", 2000, if (!rdrand4(random)) failed++);
+        if (failed) printf("RDRAND sample failures: %d\n", failed);
+    }
     else
         puts("random: four 64-bit values       skipped (RDRAND unavailable)");
     for (int len = 180; len <= 1418; len += 1238) {
