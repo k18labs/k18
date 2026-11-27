@@ -305,9 +305,9 @@ tcp_seg: xor r8d, r8d
         lodsd                   ; the ports follow)
         rol eax, 16
         stosd
-        test byte [rbx+47], 2   ; (a SYN-ACK says what a segment may hold: over IPv6 that
-        jz .ns6                 ; is 20 bytes less, 1440)
-        sub byte [rbx+57], 20
+        test byte [rbx+47], 2   ; (only SYN segments carry an MSS option)
+        jz .ns6
+        mov word [rbx+56], 0xC404 ; 1220: the IPv6 minimum MTU minus 60 bytes of headers
 .ns6:   lea esi, [rbx-2]
         lea ecx, [rbp+56]
         test r8d, r8d
