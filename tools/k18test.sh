@@ -29,7 +29,20 @@ if [[ -e $CERT/ca.pem ]] || ! openssl x509 -checkend $((40 * 86400)) -noout -in 
 fi
 # (a header as a Content-Security-Policy has them: with quotes, and here with what a shell or make would read)
 KEPT="X-Kept: default-src 'self'; \$(exit 1) \$5 \`exit 1\` \"q\""
-./k18 pack $OUT/www -n k18cli.test --san also.k18cli.test -c $CERT -o $OUT --hsts 300 --header 'X-Test: yes' --header "$KEPT" > $OUT/pack.out 2>&1 || { echo "FAIL k18 pack"; exit 1; }
+mkdir -p $OUT/bin
+REAL_MAKE="$(command -v make)"
+cat > $OUT/bin/make <<'EOF'
+#!/bin/sh
+if [ "${HCLOUD_TOKEN+x}" = x ] || [ "${SSH_KEY+x}" = x ]; then
+  echo "FAIL build secrets reached make" >&2
+  exit 1
+fi
+exec "$K18_REAL_MAKE" "$@"
+EOF
+chmod +x $OUT/bin/make
+HCLOUD_TOKEN=synthetic-cloud-token SSH_KEY=synthetic-private-key K18_REAL_MAKE="$REAL_MAKE" \
+  PATH="$OUT/bin:$PATH" ./k18 pack $OUT/www -n k18cli.test --san also.k18cli.test -c $CERT -o $OUT \
+  --hsts 300 --header 'X-Test: yes' --header "$KEPT" > $OUT/pack.out 2>&1 || { echo "FAIL k18 pack"; exit 1; }
 grep -q "of system" $OUT/pack.out || { echo "FAIL k18 pack said: $(cat $OUT/pack.out)"; exit 1; }
 ./k18 run $OUT -p $PORT > $OUT/run.out 2>&1 &
 PID=$!
