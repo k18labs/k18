@@ -81,6 +81,7 @@ E_RTO   equ 2               ;   we sent seems lost, E_DUP: or perhaps is, says a
 E_DUP   equ 4               ;   repeats; E_SENT: something has gone out that carries our
 E_SENT  equ 8               ;   ack; E_NEW: this packet's request has its response
 E_NEW   equ 16
+E_SACK  equ 32              ;   first retransmit after loss can recover all unsacked ranges
 %ifndef HOST
 VQ      equ 0x400000 + LOW  ; the two rings, 64 KiB apart (enough for queues of 1024)
 PML4    equ VQ + 0x20000    ; page tables (built at boot): the top one,
@@ -340,10 +341,12 @@ F_CA    equ 8               ;   ClientHello; F_CA (after it): something was lost
 C_CW    equ 39              ; a byte: so many segments of a response may be on their way (`tcp.tx`)
 C_KIV   equ 40              ; our application key | iv (44 bytes), then the client's
 C_T0    equ 100             ; (In the client's 44, where AES-128 has no use for 16 bytes of a
+C_SACK  equ C_T0             ;   completed handshake, this is a cursor in the client's unused AES-128 key half
 C_RTO   equ 104             ;   key's 32:) when our flight went out (0: its round trip has
                             ;   been taken), and how long this connection's timer waits
                             ;   the first time, in units of 1/64 s (`tarm`)
 TSLOT   equ 128
+F_SACK  equ 1                ; C_FL2 bit 0: the SYN cookie negotiated SACK-permitted
 
 ; What 32-bit code calls pushad and popad: the seven registers of old besides rsp (so the
 ; one a routine returns is at [rsp+48] for eax, [rsp+24] for ebx, [rsp+16] for ebp,
@@ -657,8 +660,8 @@ DHHLEN  equ $ - DHHDR
 %ifdef OURIP6
 IP6:    dq IP6A, IP6B           ; our IPv6 address (make IP6=...)
 %endif
-SYNOPT: db 2, 4, 1460 >> 8, 1460 & 255 ; maximum segment size: what fits an Ethernet frame
-        db 1, 3, 3, 0           ; (padding,) window scale: ours is not shifted
+SYNOPT_SACK: db 2, 4, 1460 >> 8, 1460 & 255, 4, 2, 1, 1
+SYNOPT_BOTH: db 2, 4, 1460 >> 8, 1460 & 255, 4, 2, 1, 1, 1, 3, 3, 0
 MSSTAB: dw 216, 536, 1220, 1440 ; the sizes we cut our segments to (the client's, rounded down)
 SHTAIL: db 0x13, 0x01, 0x00, 0x00, 0x2e, 0x00, 0x2b, 0x00, 0x02, 0x03, 0x04
         db 0x00, 0x33, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20

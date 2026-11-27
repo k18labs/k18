@@ -93,24 +93,54 @@ def parse(f):
     off = (f[at + 12] >> 4) * 4
     end = 14 + int.from_bytes(f[16:18], "big")
     sport, dport, seq, ack = struct.unpack(">HHII", f[at:at + 12])
-    return f[26:30], f[30:34], sport, dport, f[at + 13], seq, ack, f[at + off:end]
+    return f[26:30], f[30:34], sport, dport, f[at + 13], seq, ack, f[at + off:end], f[at + 20:at + off]
+
+
+def has_option(opts, want):
+    i = 0
+    while i < len(opts):
+        kind = opts[i]
+        if kind == 0:
+            break
+        if kind == 1:
+            i += 1
+            continue
+        if i + 1 >= len(opts) or opts[i + 1] < 2 or i + opts[i + 1] > len(opts):
+            break
+        if kind == want and opts[i + 1] == 2:
+            return True
+        i += opts[i + 1]
+    return False
 
 
 class Raw:
     """A connection made of frames of our own, from an address nobody has."""
     ports = iter(range(52000, 53000))
 
-    def __init__(self, s, mac, port, mss=1460):
+    def __init__(self, s, mac, port, mss=1460, sack=False, wscale=False):
         self.s, self.port, self.sport = s, port, next(Raw.ports)
         self.eth = b"\xff" * 6 + mac + b"\x08\x00"
         self.src = socket.inet_aton("10.64.0.2")
         self.seq = 1000 * self.sport
-        self.send(0x02, 0, opts=b"\x02\x04" + struct.pack(">H", mss))
+        self.syn_options = b""
+        opts = b"\x02\x04" + struct.pack(">H", mss) + (b"\x04\x02" if sack else b"")
+        if wscale:
+            opts += b"\x03\x03\x07"
+        opts += b"\x01" * (-len(opts) % 4)
+        syn_seq = self.seq
         self.seq += 1
-        self.first = self.got(1.0, first=True)          # (what the SYN got)
+        self.first = []
+        for _ in range(3):                              # retry if the tap dropped a test SYN or reply
+            self.send(0x02, 0, opts=opts, seq=syn_seq)
+            self.first = self.got(1.0, first=True)      # (what the SYN got)
+            if self.first:
+                break
         syn = [g for g in self.first if g[0] & 0x12 == 0x12]
         self.iss = syn[0][1] if syn else None
         if syn:
+            opts = self.syn_options
+            got_sack = has_option(opts, 4)
+            check("server advertises SACK receive support", got_sack)
             self.send(0x10, self.iss + 1)       # (the ack that makes the connection)
             self.got(0.05)
 
@@ -128,9 +158,10 @@ class Raw:
                 break
             if p and p[0] == OURS and p[1] == self.src and p[2] == self.port and p[3] == self.sport:
                 if first:
-                    return [p[4:]]
+                    self.syn_options = p[8]
+                    return [p[4:-1]]
                 if not p[4] & 2:
-                    out.append(p[4:])
+                    out.append(p[4:-1])
         return out
 
     def again(self, by):
@@ -379,6 +410,8 @@ def main():
     s.bind((TAP, 0))
     mac = s.getsockname()[4]
     framewise(s, mac)
+    Raw(s, mac, 443, sack=True)
+    Raw(s, mac, 443, sack=True, wscale=True)
     real_client(s, mac)
     check("the machine is there", alive())
     print("all ok" if not failed else f"FAILED: {len(failed)}")

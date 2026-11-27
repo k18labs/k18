@@ -7,6 +7,7 @@
 #       (an image with a large file first: python3 tools/mksite.py build-bn/www 6 &&
 #        make B=build-bn SITE=build-bn/www NOTSO=1)
 #   BRATE=20 (Mbit/s)  BQUEUE=60 (packets)  BDELAY=25 (ms each way)  BLOSS=0 (% lost besides)
+#   BREORDER=0% (optional)  BSEED=7 (repeatable netem loss/reorder pattern)
 #   CAP=file: capture at the client (tools/tl.py FILE then prints the download's timeline)
 #
 # It fetches PATH (default /big.bin) N times (3) and says how long each took, what the
@@ -16,7 +17,7 @@
 # then a segment, and the queue counts what a real one would. Not with tap.sh's own
 # DELAY, LOSS or REORDER.)
 B=${B:-build-site}
-RATE=${BRATE:-20} QUEUE=${BQUEUE:-60} DELAY=${BDELAY:-25} LOSSP=${BLOSS:-0}
+RATE=${BRATE:-20} QUEUE=${BQUEUE:-60} DELAY=${BDELAY:-25} LOSSP=${BLOSS:-0} SEED=${BSEED:-} REORDER=${BREORDER:-}
 ip link add vA type veth peer name vB
 ip link add br0 type bridge
 ip link set br0 type bridge stp_state 0 forward_delay 0
@@ -26,7 +27,9 @@ ip link set vA master br0
 for d in br0 vA vB k2t; do ip link set $d up; ethtool -K $d tso off gso off gro off >/dev/null 2>&1; done
 L=
 [[ $LOSSP != 0 ]] && L="loss $LOSSP%"
-tc qdisc add dev vA root netem rate "${RATE}mbit" delay "${DELAY}ms" limit "$QUEUE" $L   # towards the client
+S=(); [[ -n $SEED ]] && S=(seed "$SEED")
+R=(); [[ -n $REORDER && $REORDER != 0% ]] && R=(reorder "$REORDER" gap "${BGAP:-5}")
+tc qdisc add dev vA root netem rate "${RATE}mbit" delay "${DELAY}ms" limit "$QUEUE" $L "${R[@]}" "${S[@]}"   # towards the client
 tc qdisc add dev vB root netem delay "${DELAY}ms" limit 10000                         # and back
 sleep 1
 # (tcpdump is ended by taking its interface away: under its AppArmor profile a signal may not reach it)
