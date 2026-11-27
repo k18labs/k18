@@ -150,6 +150,7 @@ apstart: mov esp, STACK
         jz .w                   ; and must not go through the motions either: its turn at
         cmp [CPUN], eax         ; the SYNs of late (`tidle`) would be at another's
         ja .rest
+        call drbg_seed          ; APs copied the boot CPU's BSS; mix in fresh per-CPU entropy
 %ifdef WXTEST
 %if WXTEST = 7                  ; (the same on a processor that was started up: its table is
         WXGATE poll             ; at address 0 whatever loaded us)

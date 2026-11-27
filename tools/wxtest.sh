@@ -22,8 +22,8 @@
 # code. A processor whose table of handlers is at address 0 (the one a BIOS leaves, and
 # the one a processor is started up with) goes on from where the gate says; one that was
 # told it has none (`start`, `apstart`) can't.
-# And one thing that is no fault of ours but must end the same way (8): a processor whose
-# random number generator says the same every time (`rand`). Such a machine never serves.
+# And two hardware random-source failures must never produce a response: a repeated output
+# (8) resets the machine; a source which never succeeds (13) stalls before the server starts.
 #   tools/wxtest.sh          (SMP=n for other machines than 2 processors; PORT=n for other
 #                            ports than 8520 and up; EFI=1: started by UEFI firmware)
 cd "$(dirname "$0")/.." || exit 1
@@ -35,7 +35,7 @@ WHAT=("none of it" "writing to the code" "running the stack" "writing to the sit
   "a fault where the frame in hand names a handler" "the same on another processor"
   "a random number generator that says the same twice" "running the end of a long site"
   "running what lies right behind the code" "running what lay in front of the code"
-  "something left in the page where the other processors start")
+  "something left in the page where the other processors start" "an RDRAND source that never succeeds")
 P0=${PORT:-8520}
 bad=0
 i=0
@@ -80,6 +80,8 @@ for n in 1 2 3 4 5 6 7 8 9 10 11 12; do
   if [[ $n == 7 && ${SMP:-2} == 1 ]]; then echo "ok   (${WHAT[$n]}: this machine has no other)"; continue; fi
   end $n www ""
 done
+run 13 www ""
+[[ $served == no && $ended == running ]] && echo "ok   a stalled RDRAND source never serves" || { echo "FAIL a stalled RDRAND source served or reset unexpectedly (served: $served; $ended)"; bad=1; }
 end 4 one " (a site of one small file, in the first page behind the code)"
 for c in "4 one" "10 one" "11 one" "12 www"; do
   set -- $c

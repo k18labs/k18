@@ -55,7 +55,7 @@ int main(void){
     TIME("sha256 of 64 bytes (2 blocks)", 20000, { u8 *o = h, *mm = m; unsigned n = 64; ASMCALL(sha256, "+D"(o), "+S"(mm), "+c"(n)); });
     TIME("sha256 of 3000 bytes", 2000, { u8 *o = h, *mm = m; unsigned n = 3000; ASMCALL(sha256, "+D"(o), "+S"(mm), "+c"(n)); });
     /* a record: of a small page, and a full one of a file (a segment of 1,440 bytes) */
-    static u8 kiv[44], rec[2048], random[32];
+    static u8 kiv[44], rec[2048], random[32], rngseed[32];
     unsigned eax, ebx, ecx, edx;
     if (__get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & bit_RDRND) && rdrand_ready()) {
         int failed = 0;
@@ -64,6 +64,12 @@ int main(void){
     }
     else
         puts("random: four 64-bit values       skipped (RDRAND unavailable)");
+    for (int j = 0; j < sizeof rngseed; j++) rngseed[j] = j;
+    {
+        u8 *seed = rngseed;
+        ASMCALL(hctr_test_seed, "+D"(seed));
+    }
+    TIME("random: CTR_DRBG four qwords", 2000, { u8 *p = random; unsigned n = 4; ASMCALL(hctr_test_generate, "+D"(p), "+c"(n)); });
     for (int len = 180; len <= 1418; len += 1238) {
         char t[64];
         sprintf(t, "AES-128-GCM record of %d bytes", len);

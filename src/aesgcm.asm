@@ -318,3 +318,18 @@ aes4:   mov eax, RK
         aesenclast xmm2, xmm5
         aesenclast xmm3, xmm5
         ret
+
+; aessingle: AES of xmm0 under RK (for CTR_DRBG's counter blocks).
+aessingle:
+        mov eax, RK
+        movdqa xmm5, [rax]
+        pxor xmm0, xmm5
+        mov cl, 9
+.r:     add eax, 16
+        movdqa xmm5, [rax]
+        aesenc xmm0, xmm5
+        dec cl
+        jnz .r
+        movdqa xmm5, [rax+16]
+        aesenclast xmm0, xmm5
+        ret

@@ -79,13 +79,14 @@ static int commands(void)
 int main(int argc, char **argv)
 {
     static u8 m[2000], out[4096], tmp[2100], h[32], kiv[68], rngseed[32], rngout[176];
+    u8 *seedp = rngseed;
     setbuf(stdout, NULL);
     u32 i, lens[] = {0, 3, 55, 56, 63, 64, 119, 1000, 1999};
     if (asm_init()) return 1;
     if (argc > 1) return commands();
     for (i = 0; i < sizeof m; i++) m[i] = i * 7 + 3;
     for (i = 0; i < sizeof rngseed; i++) rngseed[i] = i;
-    ASMCALL(hctr_test_seed, "+D"(rngseed));
+    ASMCALL(hctr_test_seed, "+D"(seedp));
     {
         u8 *p = rngout;
         unsigned n = 4;
@@ -94,14 +95,16 @@ int main(int argc, char **argv)
         ASMCALL(hctr_test_generate, "+D"(p), "+c"(n));
         hex("drbg64", rngout, 64);
     }
-    ASMCALL(hctr_test_seed, "+D"(rngseed));
+    seedp = rngseed;
+    ASMCALL(hctr_test_seed, "+D"(seedp));
     {
         u8 *p = rngout;
         unsigned n = 3;
         ASMCALL(hctr_test_generate, "+D"(p), "+c"(n));
         hex("drbg24", rngout, 24);
     }
-    ASMCALL(hctr_test_seed, "+D"(rngseed));
+    seedp = rngseed;
+    ASMCALL(hctr_test_seed, "+D"(seedp));
     {
         u8 *p = rngout;
         unsigned n = 22;
