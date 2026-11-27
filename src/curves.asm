@@ -214,167 +214,6 @@ stock:  mov ebx, [POOLFILL]
         push 4
         pop rcx
         call rand
-%ifdef HOST
-        mov al, [HKSET]         ; (the tests choose the nonce that is used first: HKSET = 1;
-        mov esi, HK             ; or all of them: 2, and then they are at HK in the order
-        cmp al, 2               ; they are made in, the one used first last)
-        jne .one
-        add esi, ebx
-        jmp .mine
-.one:   cmp ebx, (NPOOL - 1) * 32
-        jne .k
-        test al, al
-        jz .k
-.mine:  lea edi, [rbx+POOLK]
-        mov cl, 4
-        rep movsq
-.k:
-%endif
-        add dword [POOLFILL], 32
-        push rbx
-        mov ebp, FN256
-        lea esi, [rbx+POOLK]
-        mov edi, KD
-        mov ebx, KOFFV
-        inc ecx
-        call fas
-        mov ebp, FP256
-        mov esi, TABP + (63 * 16 + 7) * 64
-        mov edi, R_E0
-        push 8
-        pop rcx
-        rep movsq
-        mov esi, X_INIT256
-        call vm
-        mov esi, TABP
-        push 64
-        pop rcx
-        mov edx, X_MADD256
-        mov ebx, KD
-        call comb
-        pop rbx
-        lea edi, [rbx+POOLR]    ; X and Z of k G: r = X / Z^2 is still to come
-        mov esi, R_X
-        push 4
-        pop rcx
-        rep movsq
-        lea edi, [rbx+POOLZ]
-        mov esi, R_Z
-        mov cl, 4
-        rep movsq
-        ret
-.all:   mov ebp, FP256
-        mov ebx, POOLZ
-        call binv
-        xor ebx, ebx
-.r:     push rbx
-        lea esi, [rbx+POOLZ]
-        mov edi, R_T1
-        push 4
-        pop rcx
-        rep movsq
-        lea esi, [rbx+POOLR]
-        mov edi, R_X
-        mov cl, 4
-        rep movsq
-        mov esi, X_FIN256
-        call vm
-        pop rbx
-        lea edi, [rbx+POOLR]
-        mov esi, R_X
-        push 4
-        pop rcx
-        rep movsq
-        add ebx, 32
-        cmp ebx, NPOOL * 32
-        jb .r
-        mov ebp, FN256
-        mov ebx, POOLK
-        call binv
-        mov dword [POOLN], NPOOL
-        and dword [POOLFILL], 0
-        ret
-
-; binv: each of the NPOOL numbers at rbx (four limbs) becomes what `inv` makes of it in the
-; field at rbp, with one `inv` for all: of their product (Montgomery's trick). POOLP gets
-; the products of the first 1, 2, 3, ... of them; then, from the last one down, the
-; inverse of the product so far times the product of those before is that one's inverse,
-; and times the number itself the inverse of the product before. Clobbers everything.
-binv:   mov esi, ebx
-        mov edi, POOLP
-        push 4
-        pop rcx
-        rep movsq
-        mov ebx, esi
-.f:     lea rsi, [rdi-32]
-        call fmul
-        add ebx, 32
-        add edi, 32
-        cmp edi, POOLP + NPOOL * 32
-        jb .f
-        lea esi, [rdi-32]
-        push rbx
-        call inv
-        pop rbx
-        mov edx, POOLP + (NPOOL - 1) * 32
-.b:     sub ebx, 32
-        sub edx, 32
-        push rbx
-        push rdx
-        mov ebx, edx
-        mov edi, R_T0
-        mov esi, R_T1
-        call fmul
-        mov rbx, [rsp+8]
-        mov edi, R_T1
-        mov esi, edi
-        call fmul
-        mov edi, ebx
-        mov esi, R_T0
-        push 4
-        pop rcx
-        rep movsq
-        pop rdx
-        pop rbx
-        cmp edx, POOLP
-        ja .b
-        lea edi, [rbx-32]
-        mov esi, R_T1
-        push 4
-        pop rcx
-        rep movsq
-        ret
-
-        HOT 0xE0F80E0F
-; comb: to the point in X.. are added, for i = 0 .. 63, entry number (nibble i of the 32 bytes
-; at rbx) of the 16 entries (ecx bytes each) of window i of the table at rsi, each by the
-; program at rdx. Clobbers all but rbp.
-comb:   xor eax, eax
-.w:     push rax
-        push rdx
-        push rbx
-        mov edx, eax
-        shr edx, 1
-        movzx edx, byte [rbx+rdx]
-        test al, 1              ; (which nibble of the byte: no secret)
-        jz .lo
-        shr edx, 4
-.lo:    and edx, 15
-        call select             ; (leaves rsi at the next window)
-        push rsi
-        push rcx
-        mov rsi, [rsp+24]
-        call vm
-        pop rcx
-        pop rsi
-        pop rbx
-        pop rdx
-        pop rax
-        inc eax
-        cmp al, 64
-        jb .w
-        ret
-
 ; freeze: the number at rsi (four limbs, below 2^256) mod 2^255 - 19, to rdi (which moves on)
 freeze: mov r8, [rsi]
         mov r9, [rsi+8]
@@ -589,6 +428,168 @@ ecinit: mov edi, BSWAPM         ; (and what GHASH needs: how pshufb reverses 16 
         ret
 
 %ifdef HOST
+
+
+%ifdef HOST
+        mov al, [HKSET]         ; (the tests choose the nonce that is used first: HKSET = 1;
+        mov esi, HK             ; or all of them: 2, and then they are at HK in the order
+        cmp al, 2               ; they are made in, the one used first last)
+        jne .one
+        add esi, ebx
+        jmp .mine
+.one:   cmp ebx, (NPOOL - 1) * 32
+        jne .k
+        test al, al
+        jz .k
+.mine:  lea edi, [rbx+POOLK]
+        mov cl, 4
+        rep movsq
+.k:
+%endif
+        add dword [POOLFILL], 32
+        push rbx
+        mov ebp, FN256
+        lea esi, [rbx+POOLK]
+        mov edi, KD
+        mov ebx, KOFFV
+        inc ecx
+        call fas
+        mov ebp, FP256
+        mov esi, TABP + (63 * 16 + 7) * 64
+        mov edi, R_E0
+        push 8
+        pop rcx
+        rep movsq
+        mov esi, X_INIT256
+        call vm
+        mov esi, TABP
+        push 64
+        pop rcx
+        mov edx, X_MADD256
+        mov ebx, KD
+        call comb
+        pop rbx
+        lea edi, [rbx+POOLR]    ; X and Z of k G: r = X / Z^2 is still to come
+        mov esi, R_X
+        push 4
+        pop rcx
+        rep movsq
+        lea edi, [rbx+POOLZ]
+        mov esi, R_Z
+        mov cl, 4
+        rep movsq
+        ret
+.all:   mov ebp, FP256
+        mov ebx, POOLZ
+        call binv
+        xor ebx, ebx
+.r:     push rbx
+        lea esi, [rbx+POOLZ]
+        mov edi, R_T1
+        push 4
+        pop rcx
+        rep movsq
+        lea esi, [rbx+POOLR]
+        mov edi, R_X
+        mov cl, 4
+        rep movsq
+        mov esi, X_FIN256
+        call vm
+        pop rbx
+        lea edi, [rbx+POOLR]
+        mov esi, R_X
+        push 4
+        pop rcx
+        rep movsq
+        add ebx, 32
+        cmp ebx, NPOOL * 32
+        jb .r
+        mov ebp, FN256
+        mov ebx, POOLK
+        call binv
+        mov dword [POOLN], NPOOL
+        and dword [POOLFILL], 0
+        ret
+
+; binv: each of the NPOOL numbers at rbx (four limbs) becomes what `inv` makes of it in the
+; field at rbp, with one `inv` for all: of their product (Montgomery's trick). POOLP gets
+; the products of the first 1, 2, 3, ... of them; then, from the last one down, the
+; inverse of the product so far times the product of those before is that one's inverse,
+; and times the number itself the inverse of the product before. Clobbers everything.
+binv:   mov esi, ebx
+        mov edi, POOLP
+        push 4
+        pop rcx
+        rep movsq
+        mov ebx, esi
+.f:     lea rsi, [rdi-32]
+        call fmul
+        add ebx, 32
+        add edi, 32
+        cmp edi, POOLP + NPOOL * 32
+        jb .f
+        lea esi, [rdi-32]
+        push rbx
+        call inv
+        pop rbx
+        mov edx, POOLP + (NPOOL - 1) * 32
+.b:     sub ebx, 32
+        sub edx, 32
+        push rbx
+        push rdx
+        mov ebx, edx
+        mov edi, R_T0
+        mov esi, R_T1
+        call fmul
+        mov rbx, [rsp+8]
+        mov edi, R_T1
+        mov esi, edi
+        call fmul
+        mov edi, ebx
+        mov esi, R_T0
+        push 4
+        pop rcx
+        rep movsq
+        pop rdx
+        pop rbx
+        cmp edx, POOLP
+        ja .b
+        lea edi, [rbx-32]
+        mov esi, R_T1
+        push 4
+        pop rcx
+        rep movsq
+        ret
+
+        HOT 0xE0F80E0F
+; comb: to the point in X.. are added, for i = 0 .. 63, entry number (nibble i of the 32 bytes
+; at rbx) of the 16 entries (ecx bytes each) of window i of the table at rsi, each by the
+; program at rdx. Clobbers all but rbp.
+comb:   xor eax, eax
+.w:     push rax
+        push rdx
+        push rbx
+        mov edx, eax
+        shr edx, 1
+        movzx edx, byte [rbx+rdx]
+        test al, 1              ; (which nibble of the byte: no secret)
+        jz .lo
+        shr edx, 4
+.lo:    and edx, 15
+        call select             ; (leaves rsi at the next window)
+        push rsi
+        push rcx
+        mov rsi, [rsp+24]
+        call vm
+        pop rcx
+        pop rsi
+        pop rbx
+        pop rdx
+        pop rax
+        inc eax
+        cmp al, 64
+        jb .w
+        ret
 
         HOT 0xE1FEE7FF
 ; select: entry number edx of the 16 entries (ecx bytes each, a multiple of 32) at rsi to the
