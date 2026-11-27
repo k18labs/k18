@@ -676,7 +676,7 @@ renew() {
     echo "k18: the image could not be packed again: the key and certificate as they were are back in $cert, and the image as it was is started" >&2
     mkdir -p "$cert/failed"
     mv "$cert/server.key" "$cert/server.pem" "$cert/failed/"
-    mv "$cert/old/"* "$cert/"
+    if compgen -G "$cert/old/*" > /dev/null; then mv "$cert/old/"* "$cert/"; fi
     again
     exit 1
   fi
