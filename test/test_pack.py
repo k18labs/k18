@@ -39,5 +39,54 @@ class BrotliSelectionTests(unittest.TestCase):
         self.assertNotIn("br", forms)
 
 
+class SiteSymlinkTests(unittest.TestCase):
+    def pack(self, site, out):
+        env = {"COMPRESS": "0", "CACHE": "600", "HSTS": "", "HEADERS": ""}
+        with patch.dict(os.environ, env, clear=False):
+            pack.main(str(site), str(out))
+
+    def test_rejects_file_symlink_before_reading_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            site, out = root / "site", root / "out"
+            site.mkdir()
+            out.mkdir()
+            target = root / "secret.txt"
+            target.write_text("synthetic secret", encoding="utf-8")
+            (site / "public.txt").symlink_to(target)
+
+            with self.assertRaisesRegex(SystemExit, "public.txt must not be a symlink"):
+                self.pack(site, out)
+            self.assertFalse((out / "site.bin").exists())
+
+    def test_rejects_directory_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            site, outside, out = root / "site", root / "outside", root / "out"
+            site.mkdir()
+            outside.mkdir()
+            out.mkdir()
+            (outside / "secret.txt").write_text("synthetic secret", encoding="utf-8")
+            (site / "linked").symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaisesRegex(SystemExit, "linked must not be a symlink"):
+                self.pack(site, out)
+            self.assertFalse((out / "site.bin").exists())
+
+    def test_rejects_site_root_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside, out = root / "outside", root / "out"
+            outside.mkdir()
+            out.mkdir()
+            (outside / "secret.txt").write_text("synthetic secret", encoding="utf-8")
+            site = root / "site"
+            site.symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaisesRegex(SystemExit, "site directory must not be a symlink"):
+                self.pack(f"{site}{os.sep}", out)
+            self.assertFalse((out / "site.bin").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

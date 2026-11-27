@@ -50,6 +50,7 @@ import json
 import mimetypes
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from urllib.parse import quote
@@ -122,6 +123,56 @@ mimetypes.init([])      # (Python's own table, not this machine's /etc/mime.type
 def content_type(name):
     ext = os.path.splitext(name)[1].lower()
     return TYPES.get(ext) or mimetypes.guess_type(name)[0] or "application/octet-stream"
+
+
+def site_files(site):
+    """List regular site files, refusing links before the packer can follow them."""
+    site = os.path.normpath(site)
+    try:
+        root_mode = os.lstat(site).st_mode
+    except OSError as exc:
+        sys.exit(f"pack.py: cannot inspect site directory: {exc.strerror}")
+    if stat.S_ISLNK(root_mode):
+        sys.exit("pack.py: site directory must not be a symlink")
+    if not stat.S_ISDIR(root_mode):
+        sys.exit("pack.py: site path is not a directory")
+    files = []
+    for root, dirs, names in os.walk(site, followlinks=False):
+        for name in dirs + names:
+            path = os.path.join(root, name)
+            if os.path.islink(path):
+                rel = os.path.relpath(path, site).replace(os.sep, "/")
+                sys.exit(f"pack.py: {rel} must not be a symlink")
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") or d == ".well-known")
+        for name in sorted(names):
+            if not name.startswith("."):
+                files.append(os.path.join(root, name))
+    return files
+
+
+def read_site_file(path, rel):
+    """Open only regular files and do not follow a final-component symlink."""
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError as exc:
+        sys.exit(f"pack.py: cannot inspect {rel}: {exc.strerror}")
+    if not stat.S_ISREG(mode):
+        sys.exit(f"pack.py: {rel} is not a regular file")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        sys.exit(f"pack.py: cannot safely open {rel}: {exc.strerror}")
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            sys.exit(f"pack.py: {rel} is not a regular file")
+        with os.fdopen(fd, "rb") as f:
+            fd = -1
+            return f.read()
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def main(site, out):
@@ -213,17 +264,11 @@ def main(site, out):
             saved[2] += min(len(data) for _, data in made)
         return n
     paths = {}          # request path -> response number
-    files = []
-    for root, dirs, names in os.walk(site):
-        dirs[:] = sorted(d for d in dirs if not d.startswith(".") or d == ".well-known")
-        for name in sorted(names):
-            if not name.startswith("."):
-                files.append(os.path.join(root, name))
+    files = site_files(site)
     not_found = front = None
     for path in files:
         rel = os.path.relpath(path, site).replace(os.sep, "/")
-        with open(path, "rb") as f:
-            body = f.read()
+        body = read_site_file(path, rel)
         if len(body) >= MAX_FILE:
             sys.exit(f"pack.py: {rel} is too large (the limit is 1 GiB)")
         url = "/" + quote(rel, safe="/~!$&'()*+,;=:@-._")

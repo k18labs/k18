@@ -128,7 +128,8 @@ trusted() { openssl verify -untrusted "$1" "$1" >/dev/null 2>&1; }
 # (how the site is packed goes to make in the environment, which make hands on as it is:
 # a header may have quotes and dollar signs in it, and they are the header's)
 build() {
-  P80="$6" HSTS="$7" CACHE="$8" HEADERS="$9" COMPRESS="${11:-1}" \
+  env -u HCLOUD_TOKEN -u SSH_KEY \
+    P80="$6" HSTS="$7" CACHE="$8" HEADERS="$9" COMPRESS="${11:-1}" \
     make -s B="$5" SITE="$1" CERT="$4" NAME="$2" SAN="${10}" IP="$3" IP6="${12:-}" >/dev/null || return 1
   printf 'site=%q\nname=%q\nip=%q\ncert=%q\np80=%q\nhsts=%q\ncache=%q\nheaders=%q\nsans=%q\ncompress=%q\nip6=%q\n' \
     "$1" "$2" "$3" "$4" "$6" "$7" "$8" "$9" "${10}" "${11:-1}" "${12:-}" > "$5/pack.conf"
