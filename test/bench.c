@@ -12,6 +12,15 @@ typedef unsigned char u8;
 #define ASMCALL(fn, ...) __asm__ volatile("call " #fn : __VA_ARGS__ : : SCRATCH)
 extern u8 E[], REGS[];
 extern void hrand(void);
+static int rdrand_ready(void){
+    for (int i = 0; i < 16; i++) {
+        unsigned long long x;
+        unsigned char ok;
+        __asm__ volatile("rdrand %0; setc %1" : "=r"(x), "=qm"(ok));
+        if (!ok) return 0;
+    }
+    return 1;
+}
 static double now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec/1e9;}
 #define TIME(name, n, ...) do { double t_ = now(); unsigned long long c_ = __rdtsc(); \
     for (i = 0; i < (n); i++) { __VA_ARGS__; } \
@@ -33,10 +42,10 @@ int main(void){
     /* a record: of a small page, and a full one of a file (a segment of 1,440 bytes) */
     static u8 kiv[44], rec[2048], random[32];
     unsigned eax, ebx, ecx, edx;
-    if (__get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & bit_RDRND))
+    if (__get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & bit_RDRND) && rdrand_ready())
         TIME("random: four 64-bit values", 2000, { u8 *p = random; unsigned n = 4; ASMCALL(hrand, "+D"(p), "+c"(n)); });
     else
-        puts("random: four 64-bit values       skipped (CPU has no RDRAND)");
+        puts("random: four 64-bit values       skipped (RDRAND unavailable)");
     for (int len = 180; len <= 1418; len += 1238) {
         char t[64];
         sprintf(t, "AES-128-GCM record of %d bytes", len);
