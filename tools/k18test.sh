@@ -79,7 +79,7 @@ R=$(./k18 renew 192.0.2.1 $OUT 2>&1)
 check "renew does nothing while the certificate has 30 days left" "$([[ $? == 0 && $R == *"nothing to do"* ]] && echo ok)"
 R=$(./k18 renew 192.0.2.1 $OUT --days 90 --dry-run 2>&1)
 check "with less left than it is told to keep, it would ask for one, for both names (${R:0:60}...)" \
-  "$([[ $R == *"would ask Let's Encrypt for a certificate for DNS:k18cli.test,DNS:also.k18cli.test "*"CN=k18cli.test"* ]] && echo ok)"
+  "$(grep -Eq 'would ask Let.s Encrypt for a certificate for DNS:k18cli.test,DNS:also.k18cli.test.*subject=.*CN *= *k18cli.test' <<<"$R" && echo ok)"
 R=$(./k18 renew 192.0.2.1 $OUT --force --dry-run 2>&1)
 check "and with --force" "$([[ $R == *"would ask Let's Encrypt"* ]] && echo ok)"
 R=$(./k18 renew 192.0.2.1 $OUT --force --dry-run --email 'me@k18cli.test;id' 2>&1)
@@ -103,6 +103,13 @@ check "a certificate made here is for all its names ($(cat $OUT2/name 2>/dev/nul
   openssl verify -CAfile $OUT2/ca.pem -verify_ip 192.0.2.7 $CERT2/server.pem >/dev/null 2>&1 &&
   ! openssl verify -CAfile $OUT2/ca.pem -verify_hostname other.k18priv.test $CERT2/server.pem >/dev/null 2>&1 && echo ok)"
 rm -f $OUT2.out
+# An IP address is a SAN, never a Subject CN (Let's Encrypt rejects IP CNs).
+OUT3=build-k18iptest
+mkdir -p $OUT3
+sed 's/^name=.*/name=192.0.2.7/' $OUT/pack.conf > $OUT3/pack.conf
+R=$(./k18 renew 192.0.2.1 $OUT3 --force --dry-run 2>&1)
+check "an IP address stays in SAN and out of the Subject CN ($R)" \
+  "$([[ $R == *'IP:192.0.2.7'* && $R != *'CN'*'192.0.2.7'* ]] && echo ok)"
 # --no-compress: every file once, as it is; and renew would pack it that way again
 ./k18 pack $OUT/www -n k18priv.test -c $CERT2 -o $OUT2 --no-compress > /dev/null 2>&1
 check "with --no-compress nothing is packed twice" "$(! grep -q 'Content-Encoding' $OUT2/site.json && grep -q '^compress=0$' $OUT2/pack.conf &&
