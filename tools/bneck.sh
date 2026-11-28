@@ -7,12 +7,13 @@
 #       (an image with a large file first: python3 tools/mksite.py build-bn/www 6 &&
 #        make B=build-bn SITE=build-bn/www NOTSO=1)
 #   BRATE=20 (Mbit/s)  BQUEUE=60 (packets)  BDELAY=25 (ms each way)  BLOSS=0 (% lost besides)
-#   BREORDER=0% (optional)  BSEED=7 (repeatable netem loss/reorder pattern)
+#   BREORDER=0% (optional)  BSEED=7 (if supported by the installed tc/netem)
 #   CAP=file: capture at the client (tools/tl.py FILE then prints the download's timeline)
 #
-# It fetches PATH (default /big.bin) N times (3) and says how long each took, what the
-# client's TCP counted (segments that came early or twice), and how many packets the
-# bottleneck dropped so far. (tap - bridge - a veth pair, the bottleneck on its near end;
+# It fetches PATH (default /big.bin) N times (3) and says how long each took, the
+# client's out-of-order/duplicate-ACK recovery counters, TCP retransmission and timeout
+# counters, and how many packets the bottleneck dropped so far. (tap - bridge - a veth
+# pair, the bottleneck on its near end;
 # the client's addresses move to the far end. Use an image built with NOTSO=1: a frame is
 # then a segment, and the queue counts what a real one would. Not with tap.sh's own
 # DELAY, LOSS or REORDER.)
@@ -43,8 +44,12 @@ NAME=$(cat "$B/name"); P=${1:-/big.bin}; N=${2:-3}
 CA=(); [[ -s $B/ca.pem ]] && CA=(--cacert "$B/ca.pem")
 WANT=$(python3 -c "import json; print(json.load(open('$B/site.json'))['paths']['$P']['sha256'])")
 TMP=$(mktemp)
+tcpstats() {
+  nstat -az 2>/dev/null | awk '$1 ~ /^(TcpRetransSegs|TcpExtTCPTimeouts|TcpExtTCPSackRecovery|TcpExtTCPSackFailures|TcpExtTCPOFOQueue|TcpExtTCPDSACKOldSent|TcpExtTCPDSACKOfoSent)$/ {print $1, $2}'
+}
 for _ in $(seq 1 "$N"); do
-  nstat -n >/dev/null 2>&1
+  declare -A BEFORE=()
+  while read -r k v; do BEFORE["$k"]=$v; done < <(tcpstats)
   if ! T=$(curl -s --max-time 120 "${CA[@]}" --interface 10.0.2.32 --connect-to "$NAME:443:10.0.2.15:443" -o "$TMP" -w '%{time_total} s, %{speed_download} B/s' "https://$NAME$P"); then
     echo "$P: download failed"
     exit 1
@@ -53,7 +58,9 @@ for _ in $(seq 1 "$N"); do
     echo "$P: $T BUT NOT THE FILE"
     exit 1
   fi
-  echo "$P: $T; $(nstat 2>/dev/null | awk '/TcpExtTCPOFOQueue|TcpExtTCPDSACKOldSent|TcpExtTCPDSACKOfoSent/{printf "%s=%s ", substr($1,7), $2}')dropped at the bottleneck: $(tc -s qdisc show dev vA | sed -n 's/.*dropped \([0-9]*\).*/\1/p')"
+  TCP=()
+  while read -r k v; do TCP+=("$k=$((v-${BEFORE[$k]:-0}))"); done < <(tcpstats)
+  echo "$P: $T; TCP ${TCP[*]}; bottleneck qdisc drops=$(tc -s qdisc show dev vA | sed -n 's/.*dropped \([0-9]*\).*/\1/p')"
 done
 rm -f "$TMP"
 if [[ -n ${CAP:-} ]]; then sleep 0.5; ip link del vA 2>/dev/null; sleep 0.5; fi
