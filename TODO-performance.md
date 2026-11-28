@@ -5,7 +5,7 @@ points for comparison, not promised gains.
 
 ## 1. Reduce random-number generation cost on slower supported CPUs
 
-**Status: implementation merged in PR #22; Zen 2 and Skylake target-CPU validation remains.**
+**Status: implementation merged in PR #22; optional Zen 2 and Skylake benchmarks are deferred.**
 
 Target: reduce the roughly 42,000 cycles of `rdrand` work per handshake measured on Zen 2,
 without weakening nonce freshness or the existing stuck/repeated-output health check.
@@ -21,11 +21,12 @@ repeating hardware source still prevents a handshake from using weak randomness.
 
 ## 2. Recover multiple lost segments without waiting one round trip per loss
 
-**Status: implementation merged in PR #23; the SACK cursor field-alias fix merged in PR #25.** The
+**Status: implementation and SACK cursor field fix merged in PRs #23 and #25.** The
 6 MiB, 1% loss comparison improved from a 20.75 s
 baseline median to 17.68 s on ARM64 WSL/QEMU TCG; this is an emulated result, not a cx23
 measurement. The cursor uses unused AES-128 client-key bytes, separate from RTT and RTO state,
-so connection-slot size is unchanged.
+so connection-slot size is unchanged. CI transfer cases pass SHA-256 checks for queue-10,
+large-queue, 0.25% and 1% loss, and reordering. Target-CPU timing is deferred.
 
 Target: shorten large-transfer completion time on lossy paths while keeping connection state
 small.
@@ -41,7 +42,7 @@ budget explicit and confirm recovery does not resend data the client already has
 
 ## 3. Pace large response bursts for shallow queues
 
-**Status: emulated evaluation complete; no sender change retained. CX23 validation remains pending.**
+**Status: emulated evaluation complete; no sender change retained. Optional cx23 validation is deferred.**
 
 Target: reduce loss and completion time on shallow-queue paths without reducing throughput on
 well-provisioned paths.
