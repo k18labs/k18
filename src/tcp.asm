@@ -147,8 +147,7 @@ tcp:
         ; keyed hash of the client's address and ports (`prf`):
         ;   bits 14-31: W xor the low bits of the client's initial sequence number, so that
         ;               the packet that follows the SYN-ACK is recognised as the first;
-        ;   bits 6-13:  W (HINT): tells a packet that acknowledges a SYN-ACK of ours, first
-        ;               or not, from one of a connection we don't know;
+        ;   bits 6-13:  W (HINT): helps reject packets that do not acknowledge our SYN-ACK;
         ;   bits 2-5:   by how many bits the client shifts its window (window scaling:
         ;               what its SYN said, 14 at most; 0: it does not);
         ;   bits 0-1:   which of four segment sizes the client takes (MSSTAB).
@@ -220,9 +219,19 @@ tcp:
         sbb eax, -1
 .six:   lea eax, [rax+r8*4]
         xchg eax, edx
-        mov al, 0x12            ; SYN|ACK. Its options: what we take in one segment, and, if
-        mov esi, SYNOPT         ; the client scales its window, that we know (and don't
-        push 4                  ; scale ours: 64 KB at a time is more than any request)
+        mov al, 0x12            ; SYN|ACK. SACK-permitted lets the client report received
+        cmp byte [rbx+P_PORTS+2], bl ; ranges on TLS flights; port 80 has no TLS key slot
+        je .p80
+        mov esi, SYNOPT_SACK
+        push 8
+        pop rcx
+        test r8d, r8d
+        jz .seg
+        mov esi, SYNOPT_BOTH
+        mov cl, 12
+        jmp .seg
+.p80:   mov esi, SYNOPT
+        push 4
         pop rcx
         test r8d, r8d
         jz .seg
@@ -808,9 +817,53 @@ tcp:
         cmp byte [rbp+C_CW], 2  ; from now on (two at least)
         jae .ca
         mov byte [rbp+C_CW], 2
-.ca:    or byte [rbp+C_FL2], F_CA
+.ca:    test byte [rbp+C_FL2], F_CA
+        jnz .cas
+        test byte [rbp+C_FL2], F_SACK
+        jz .cas
+        mov eax, [rbp+C_ACK]
+        mov [rbp+C_SACK], eax
+        or byte [rbx+P_EV], E_SACK
+.cas:   or byte [rbp+C_FL2], F_CA
 .rtx:   or byte [rbp+C_FLG], F_DUP3
         count 4
+        test byte [rbx+P_EV], E_RTO
+        jz .sacktry
+        test byte [rbp+C_FL2], F_SACK
+        jz .resendack
+        mov eax, [rbp+C_ACK]
+        mov [rbp+C_SACK], eax
+        jmp .resendack
+.sacktry:
+        test byte [rbp+C_FL2], F_SACK
+        jz .resendack
+        movzx eax, byte [rbx+46]
+        and eax, 0xF0
+        cmp eax, 0x50
+        je .sacknoopt
+        test byte [rbx+P_EV], E_SACK
+        jnz .sackfirst
+        test byte [rbx+P_EV], E_DUP
+        jz .resendack
+        call .sackrtx
+        test r10d, r10d        ; only suppress Reno's retransmit if SACK sent a hole
+        jnz .pump
+        jmp .resendack
+.sackfirst:
+        and byte [rbx+P_EV], ~E_SACK
+        call .sackrtx
+        test r10d, r10d
+        jnz .pump
+        mov eax, [rbp+C_ACK]
+        add eax, [TXM]
+        mov [rbp+C_SACK], eax ; the normal fast retransmit below sends this segment
+.sacknoopt:
+        test byte [rbx+P_EV], E_SACK
+        jz .resendack
+        mov eax, [rbp+C_ACK]
+        add eax, [TXM]
+        mov [rbp+C_SACK], eax ; no SACK options: the normal fast retransmit sends it
+.resendack:
         mov eax, [rbp+C_ACK]
         call sendseg
 .pump:  movzx eax, word [rbx+P_WIN]
@@ -957,3 +1010,169 @@ tcp:
         xor edi, edi
         call tcp_seg
         jmp .free
+
+; .sackrtx: use this ACK's SACK blocks as a bounded scoreboard. C_SACK is a cursor in the
+; current flight, stored in the completed handshake's no-longer-needed RTT slot. Only
+; retransmit a hole only after three segments beyond it have been reported received.
+.sackrtx:
+        push r12
+        push r13
+        push r14
+        push r15
+        push 0                  ; whether this call selectively retransmitted anything
+        movzx ecx, byte [rbx+46]
+        shr ecx, 2
+        and ecx, 0x3C
+        sub ecx, 20
+        jbe .sacknone
+        lea r14, [rbx+54]
+        lea r15, [r14+rcx]
+        mov r12d, [rbp+C_SACK]
+        mov eax, r12d
+        sub eax, [rbp+C_ACK]
+        mov edx, [rbp+C_SND]
+        sub edx, [rbp+C_ACK]
+        cmp eax, edx
+        jb .sackcursor
+        mov r12d, [rbp+C_ACK]
+        mov [rbp+C_SACK], r12d
+.sackcursor:
+        call .sackcovered
+        test r9d, r9d
+        jz .sacknone
+        movzx r13d, byte [rbp+C_CW]
+.sackloop:
+        mov eax, r12d
+        sub eax, [rbp+C_ACK]
+        mov edx, [rbp+C_SND]
+        sub edx, [rbp+C_ACK]
+        cmp eax, edx
+        jae .sackdone
+        mov eax, r12d
+        call .sackcovered
+        test r9d, r9d
+        jz .sacknone
+        test r11d, r11d
+        jz .sackhole
+        mov r12d, eax
+        mov [rbp+C_SACK], r12d
+        jmp .sackloop
+.sackhole:
+        mov edx, [TXM]
+        lea edx, [rdx+rdx*2]
+        cmp eax, edx
+        jb .sackdone           ; fewer than three segments beyond this point are SACKed
+        push r12
+        push r13
+        push r14
+        push r15
+        mov eax, r12d
+        call sendseg
+        pop r15
+        pop r14
+        pop r13
+        pop r12
+        mov qword [rsp], 1
+        mov eax, [TXM]
+        add r12d, eax
+        mov [rbp+C_SACK], r12d
+        dec r13d
+        jz .sackdone
+        jmp .sackloop
+.sacknone:
+        xor r9d, r9d
+.sackdone:
+        pop r10
+        pop r15
+        pop r14
+        pop r13
+        pop r12
+        ret
+
+; .sackcovered: r12d is the candidate sequence; r14:r15 bound this packet's options.
+; Return eax = covering block's right edge, or the largest block above the candidate;
+; r9d = a valid block exists, r11d = this candidate is covered.
+.sackcovered:
+        push r13
+        xor r9d, r9d
+        xor r11d, r11d
+        xor edi, edi
+        mov rsi, r14
+.sackopt:
+        cmp rsi, r15
+        jae .sackevidence
+        movzx eax, byte [rsi]
+        test al, al
+        jz .sackevidence
+        inc rsi
+        cmp al, 1
+        je .sackopt
+        lea rdx, [rsi+1]
+        cmp rdx, r15
+        ja .sackevidence
+        movzx edx, byte [rsi]
+        cmp edx, 2
+        jb .sackevidence
+        lea r10, [rsi+rdx-1]
+        cmp r10, r15
+        ja .sackevidence
+        cmp al, 5
+        jne .sackother
+        cmp edx, 10
+        jb .sackother
+        mov ecx, edx
+        sub ecx, 2
+        test ecx, 7
+        jnz .sackother
+        inc rsi
+        sub edx, 2
+.sackblock:
+        cmp edx, 8
+        jb .sacknextopt
+        mov eax, [rsi]
+        bswap eax
+        mov ecx, [rsi+4]
+        bswap ecx
+        mov r13d, eax
+        sub r13d, [rbp+C_ACK]
+        mov r8d, ecx
+        sub r8d, [rbp+C_ACK]
+        cmp r13d, r8d
+        jae .sacknextblock
+        mov eax, [rbp+C_SND]
+        sub eax, [rbp+C_ACK]
+        cmp r8d, eax
+        ja .sacknextblock
+        mov r9d, 1
+        mov eax, r12d
+        sub eax, [rbp+C_ACK]
+        cmp eax, r13d
+        jb .sackafter
+        cmp eax, r8d
+        jb .sackiscov
+        jmp .sacknextblock
+.sackafter:
+        mov eax, r8d
+        sub eax, r13d
+        cmp eax, edi
+        cmova edi, eax        ; overlapping or repeated blocks cannot inflate the evidence
+        jmp .sacknextblock
+.sackiscov:
+        mov eax, ecx
+        mov r11d, 1
+        pop r13
+        ret
+.sacknextblock:
+        add rsi, 8
+        sub edx, 8
+        jmp .sackblock
+.sacknextopt:
+        mov rsi, r10
+        jmp .sackopt
+.sackother:
+        mov rsi, r10
+        jmp .sackopt
+.sackevidence:
+        mov eax, edi
+        pop r13
+        ret

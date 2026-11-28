@@ -354,7 +354,7 @@ handshake:
         push 22
         pop rcx
         rep movsd
-        and byte [rbp+C_FL2], 0xF0 ; (the window's shift stays)
+        and byte [rbp+C_FL2], 0xF1 ; (the window's shift and SACK permission stay)
         inc dword [rbp+C_ST]
         xchg eax, edi
         ret
