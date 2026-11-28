@@ -1,0 +1,43 @@
+name: Native benchmark comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: Branch name or full commit SHA for the baseline
+        required: true
+        default: main
+        type: string
+      candidate_ref:
+        description: Branch name or full commit SHA for the candidate
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install benchmark build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm gcc make python3 python3-cryptography
+      - name: Compare revisions on one pinned CPU
+        env:
+          BASELINE_REF: ${{ inputs.baseline_ref }}
+          CANDIDATE_REF: ${{ inputs.candidate_ref }}
+          OUT_DIR: ${{ runner.temp }}/k18-benchmark-results
+        run: sh bench/compare.sh "$BASELINE_REF" "$CANDIDATE_REF"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-benchmark-results
+          path: ${{ runner.temp }}/k18-benchmark-results
+          if-no-files-found: error
+          retention-days: 14

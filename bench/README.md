@@ -50,6 +50,14 @@ key shares, a post-quantum one first: 1.5 KB in two segments. One row asks that 
 
 `bench/run.sh IP` runs the eleven rows below: 15 s each after a second of warm-up.
 
+For host-side crypto timings, `make bench` reports the median and median absolute
+deviation from seven samples for each operation. It includes the handshake, HMAC,
+and fresh versus cached AES-GCM setup at several record sizes. To compare two
+revisions on one pinned x86-64 runner, dispatch the **Native benchmark comparison**
+workflow with `baseline_ref` and `candidate_ref`; it alternates five runs per revision
+and saves the raw output and summary as an artifact. Cloud runner results are useful
+for same-run comparisons, not as absolute CPU performance claims.
+
 ## The servers
 All serve `www/index.html` (27 bytes) with the certificate and key of `cert-hz/` (ECDSA
 P-256, the generated leaf and CA), TLS 1.3 only, X25519, no session tickets or cache, on

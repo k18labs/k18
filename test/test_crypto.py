@@ -56,6 +56,8 @@ exp["drbg176"] = ctr_drbg(drbg_seed, (176,))
 for n in (0, 3, 55, 56, 63, 64, 119, 1000, 1999):
     exp[f"sha{n}"] = hashlib.sha256(m[:n]).digest()
 exp["hmac"] = hmac.new(m[:32], m[32:82], hashlib.sha256).digest()
+for n in (0, 1, 31, 32, 33, 55, 56, 63, 64):
+    exp[f"hmac{n}"] = hmac.new(m[:32], m[32:32 + n], hashlib.sha256).digest()
 info = b"\x00\x20" + b"\x0dtls13 derived" + b"\x20" + m[100:132] + b"\x01"
 exp["expand"] = hmac.new(m[:32], info, hashlib.sha256).digest()
 sk = X25519PrivateKey.from_private_bytes(bytes(32))
@@ -65,6 +67,7 @@ for i, n in enumerate((1, 100, 1500, 15, 16, 17, 63, 64, 65, 128)):
     nonce = iv[:4] + bytes(a ^ b for a, b in zip(iv[4:], seq.to_bytes(8, "big")))
     hdr = bytes([0x17, 3, 3]) + (n + 16).to_bytes(2, "big")
     exp[f"gcm{n}_{seq}"] = hdr + AESGCM(key[:16]).encrypt(nonce, m[:n], hdr)
+    exp[f"gcmcached{n}_{seq}"] = exp[f"gcm{n}_{seq}"]
     exp[f"ungcm{n}_{seq}"] = m[:n] + exp[f"gcm{n}_{seq}"][-16:]   # decrypted again, and its tag
 
 got = {}

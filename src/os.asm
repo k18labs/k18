@@ -461,7 +461,7 @@ DBG     equ BSS + 0x0F500
 %ifdef HOST
 BITS 64
         section .text align=32
-        global sha256, hmac, expand, seal, shaconst, echost, xdh, sign
+        global sha256, hmac, expand, seal, seal_cached, shaconst, echost, xdh, sign
         global E, REGS
 %else
         org 0x100000 + DELTA

@@ -132,6 +132,15 @@ int main(int argc, char **argv)
     }
     hm(h, m, m + 32, 50);
     hex("hmac", h, 32);
+    {
+        const u32 hmac_lens[] = {0, 1, 31, 32, 33, 55, 56, 63, 64};
+        for (i = 0; i < sizeof hmac_lens / sizeof *hmac_lens; i++) {
+            char t[32];
+            hm(h, m, m + 32, hmac_lens[i]);
+            sprintf(t, "hmac%u", hmac_lens[i]);
+            hex(t, h, 32);
+        }
+    }
     ex(h, m, "\x20\x07" "derived", m + 100);
     hex("expand", h, 32);
     for (i = 0; i < 32; i++) kiv[i] = m[300 + i], kiv[32 + i] = m[400 + i];
@@ -144,6 +153,9 @@ int main(int argc, char **argv)
         L = op(tmp, out + 5, L - 21, kiv, i * 77);    /* and back: the plaintext, then the tag */
         sprintf(t, "ungcm%u_%u", n, i * 77);
         hex(t, tmp, L);
+        L = slc(out, m, n, kiv, i * 77);
+        sprintf(t, "gcmcached%u_%u", n, i * 77);
+        hex(t, out, L);
     }
     /* X25519 with our scalar e (clamped as in RFC 7748): key share, and the secret with the
      * public key of the all-zero private key; with scalars of all ones and all zeros, with a
