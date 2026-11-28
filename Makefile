@@ -128,7 +128,7 @@ $(B)/os.bin: $(OS) $(GEN) $(PACKED) $(B)/ip $(B)/ip6
 	@chmod go= $@ $(B)/os.lst
 	@python3 tools/made.py $(B) $(ASDEF) $$(cat $(B)/delta)
 	@echo "image: $$(stat -c %s $@) bytes, of which the site: $$(stat -c %s $(B)/site.bin)"
-	@python3 tools/jcc.py $(B)/os.lst $(HOT) || echo "(these jumps lie on 32-byte boundaries: see HOT in src/os.asm)"
+	@python3 tools/jcc.py $(B)/os.lst $(HOT)
 
 # asm crypto checked against pyca/cryptography on the host (the asm calls and pushes as it
 # likes: no red zone; and it wants its buffers below 4 GiB: no PIE)
