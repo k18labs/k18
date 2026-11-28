@@ -65,3 +65,26 @@ CI includes queue-10 and large-queue no-loss controls, sparse and 1% loss cases,
 reordering as correctness and file-integrity checks. Revisit only with a pacing signal
 that can distinguish path capacity from delay and queue pressure, then remeasure against the
 cx23 large-file result before retaining a change.
+
+## 4. Reduce fresh short-record AES-GCM overhead
+
+**Status: eight-block GHASH folding merged in PR #31. A same-run comparison found fresh
+64-byte and 180-byte records about 11% slower; no short-record alternative has been tested.**
+
+Target: keep the measured medium and large-record gains while reducing setup cost for short,
+freshly sealed records.
+
+On an Intel Xeon 6975P-C, the H^1..H^8 implementation improved fresh 512/1024/1418-byte
+records by 1.0%/6.3%/7.8% and cached records of those sizes by 13.2%/15.4%/16.4%. Fresh
+64-byte and 180-byte records slowed by 11% each. Cached 64-byte records were unchanged,
+while cached 180-byte records improved by 5.2%. The combined handshake benchmark changed by
+-0.3%, within noise. See [the same-run benchmark](https://github.com/k18labs/k18/actions/runs/46113754716).
+
+Evaluate a smaller GHASH fold or reduced H-power setup for short records, with the path
+selected only from public record length; retain the eight-block path for larger records if
+the measurements support it. Compare fresh and cached 64/180/512/1024/1418-byte records and
+the combined handshake on the same pinned CPU. Cover lengths around each dispatch and block
+boundary, partial final blocks, and multi-group records with the independent AES-GCM tests,
+Wycheproof, and constant-time checks. Keep a candidate only if the short-record gain exceeds
+measurement noise without a material regression in larger records, bulk cached sealing,
+handshake timing, or image size.
