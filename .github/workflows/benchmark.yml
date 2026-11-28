@@ -34,7 +34,7 @@ jobs:
           BASELINE_REF: ${{ inputs.baseline_ref }}
           CANDIDATE_REF: ${{ inputs.candidate_ref }}
           OUT_DIR: ${{ runner.temp }}/k18-benchmark-results
-        run: bench/compare.sh "$BASELINE_REF" "$CANDIDATE_REF"
+        run: sh bench/compare.sh "$BASELINE_REF" "$CANDIDATE_REF"
       - uses: actions/upload-artifact@v4
         with:
           name: native-benchmark-results
