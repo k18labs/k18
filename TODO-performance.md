@@ -91,7 +91,7 @@ handshake timing, or image size.
 
 ## 5. Measure TCP recovery on high-latency lossy paths
 
-**Status: investigation found a repeatable slowdown under emulation; added CI transfer coverage and per-transfer TCP recovery counters. No TCP algorithm change is justified yet.**
+**Status: investigation found a repeatable slowdown under emulation; added CI transfer coverage and per-transfer client TCP counters. No TCP algorithm change is justified yet.**
 
 At 20 Mbit/s, a 2,000-packet queue, and 100 ms round-trip time, a 6 MiB download took
 5.94 seconds without loss and 34.06/33.88 seconds with deterministic 1% loss (`BSEED=7`)
@@ -101,10 +101,13 @@ timeouts, and 412 duplicate ACKs. This points to slow recovery after loss at hig
 but emulation and capture overhead affect the timing; it is not yet a confirmed target-CPU
 performance result or proof of a TCP defect.
 
-CI now runs a no-loss control and a 1% loss case at these settings. GitHub runners use a
+One GitHub Actions run measured 5.89 s without loss and 42.63 s with 1% loss at these
+settings; both SHA-256 checks passed. Loss is stochastic, so these timings are one
+observation and CI has no timing threshold. GitHub runners use a
 `tc netem` version that rejects the optional `seed` argument, so CI uses stochastic loss;
 the seeded case remains a local repeatability tool where supported. `tools/bneck.sh`
-reports TCP retransmission, timeout, SACK recovery/failure, out-of-order, and DSACK counters
-separately from actual bottleneck qdisc drops. Compare CI counters and timings across runs;
+reports client-side out-of-order and DSACK counters separately from actual bottleneck qdisc
+drops. Linux client counters do not observe retransmissions from the k18 custom TCP sender;
+use packet captures (CAP with tools/tl.py) for those. Compare CI timings across runs;
 trace which loss-recovery path accounts for the timeouts before changing retransmission,
 congestion-control, or pacing behavior. Keep full-file hash verification in every case.

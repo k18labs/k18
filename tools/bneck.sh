@@ -10,10 +10,11 @@
 #   BREORDER=0% (optional)  BSEED=7 (if supported by the installed tc/netem)
 #   CAP=file: capture at the client (tools/tl.py FILE then prints the download's timeline)
 #
-# It fetches PATH (default /big.bin) N times (3) and says how long each took, the
-# client's out-of-order/duplicate-ACK recovery counters, TCP retransmission and timeout
-# counters, and how many packets the bottleneck dropped so far. (tap - bridge - a veth
-# pair, the bottleneck on its near end;
+# It fetches PATH (default /big.bin) N times (3) and says how long each took, client-side
+# out-of-order and DSACK counters, and how many packets the bottleneck dropped so far.
+# These Linux counters describe the client; k18's TCP sender is its own stack. Use CAP to
+# inspect k18 retransmissions with tools/tl.py. (tap - bridge - a veth pair, the bottleneck
+# on its near end;
 # the client's addresses move to the far end. Use an image built with NOTSO=1: a frame is
 # then a segment, and the queue counts what a real one would. Not with tap.sh's own
 # DELAY, LOSS or REORDER.)
@@ -45,7 +46,7 @@ CA=(); [[ -s $B/ca.pem ]] && CA=(--cacert "$B/ca.pem")
 WANT=$(python3 -c "import json; print(json.load(open('$B/site.json'))['paths']['$P']['sha256'])")
 TMP=$(mktemp)
 tcpstats() {
-  nstat -az 2>/dev/null | awk '$1 ~ /^(TcpRetransSegs|TcpExtTCPTimeouts|TcpExtTCPSackRecovery|TcpExtTCPSackFailures|TcpExtTCPOFOQueue|TcpExtTCPDSACKOldSent|TcpExtTCPDSACKOfoSent)$/ {print $1, $2}'
+  nstat -az 2>/dev/null | awk '$1 ~ /^(TcpExtTCPOFOQueue|TcpExtTCPDSACKOldSent|TcpExtTCPDSACKOfoSent)$/ {print $1, $2}'
 }
 for _ in $(seq 1 "$N"); do
   declare -A BEFORE=()
@@ -60,7 +61,7 @@ for _ in $(seq 1 "$N"); do
   fi
   TCP=()
   while read -r k v; do TCP+=("$k=$((v-${BEFORE[$k]:-0}))"); done < <(tcpstats)
-  echo "$P: $T; TCP ${TCP[*]}; bottleneck qdisc drops=$(tc -s qdisc show dev vA | sed -n 's/.*dropped \([0-9]*\).*/\1/p')"
+  echo "$P: $T; client TCP ${TCP[*]}; bottleneck qdisc drops=$(tc -s qdisc show dev vA | sed -n 's/.*dropped \([0-9]*\).*/\1/p')"
 done
 rm -f "$TMP"
 if [[ -n ${CAP:-} ]]; then sleep 0.5; ip link del vA 2>/dev/null; sleep 0.5; fi
