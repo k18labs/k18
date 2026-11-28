@@ -2,8 +2,8 @@
 # Compare two k18 revisions on the same pinned x86-64 runner.
 set -eu
 
-base_ref=${1:?usage: bench/compare.sh BASELINE_REF CANDIDATE_REF}
-candidate_ref=${2:?usage: bench/compare.sh BASELINE_REF CANDIDATE_REF}
+base_ref=${1:?usage: bench/compare.sh BASELINE_BRANCH_OR_SHA CANDIDATE_BRANCH_OR_SHA}
+candidate_ref=${2:?usage: bench/compare.sh BASELINE_BRANCH_OR_SHA CANDIDATE_BRANCH_OR_SHA}
 root=$(git rev-parse --show-toplevel)
 out=${OUT_DIR:-"$root/benchmark-results"}
 if [ "$(uname -m)" != x86_64 ]; then
@@ -20,10 +20,21 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-git -C "$root" fetch --no-tags origin "$base_ref"
-git -C "$root" fetch --no-tags origin "$candidate_ref"
-base_sha=$(git -C "$root" rev-parse --verify "$base_ref^{commit}")
-candidate_sha=$(git -C "$root" rev-parse --verify "$candidate_ref^{commit}")
+resolve_ref() {
+    ref=$1
+    if printf '%s\n' "$ref" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+        git -C "$root" fetch --no-tags origin "$ref"
+        git -C "$root" rev-parse --verify "$ref^{commit}"
+    elif git -C "$root" check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        git -C "$root" fetch --no-tags origin "+refs/heads/$ref:refs/remotes/origin/$ref"
+        git -C "$root" rev-parse --verify "refs/remotes/origin/$ref^{commit}"
+    else
+        echo "expected a branch name or full 40-character commit SHA: $ref" >&2
+        return 2
+    fi
+}
+base_sha=$(resolve_ref "$base_ref")
+candidate_sha=$(resolve_ref "$candidate_ref")
 git -C "$root" worktree add --detach "$tmp/base" "$base_sha" >/dev/null
 git -C "$root" worktree add --detach "$tmp/candidate" "$candidate_sha" >/dev/null
 

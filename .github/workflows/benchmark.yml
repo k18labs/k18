@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       baseline_ref:
-        description: Git ref for the baseline
+        description: Branch name or full commit SHA for the baseline
         required: true
         default: main
         type: string
       candidate_ref:
-        description: Git ref for the candidate
+        description: Branch name or full commit SHA for the candidate
         required: true
         default: main
         type: string
