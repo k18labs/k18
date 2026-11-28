@@ -541,9 +541,9 @@ shaconst:
 %endif
 
 ; Keep the standalone routine groups in this order to reduce padding before HOT entries.
-%include "sha.asm"          ; `keys`, `sha256`, `hmac`, `expand`
-
 %include "aesgcm.asm"       ; `seal`: AES-128-GCM
+
+%include "sha.asm"          ; `keys`, `sha256`, `hmac`, `expand`
 
 %include "curves.asm"       ; `xdh`, `sign`, `rand`, `stock`, and the arithmetic under them
 
