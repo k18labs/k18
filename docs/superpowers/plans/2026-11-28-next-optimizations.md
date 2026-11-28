@@ -36,24 +36,32 @@
 
 ### Task 2: SIMD HMAC pad transforms
 
-- [ ] Add correctness coverage for HMAC message lengths at the boundaries and full 64-byte input.
-- [ ] Implement fixed-width pad transforms only if same-run A/B results improve.
-- [ ] Run crypto vectors, constant-time checks, and full CI; submit a focused PR.
+- [x] Add correctness coverage for HMAC lengths 0, 1, 31, 32, 33, 55, 56, 63, and 64 bytes.
+- [x] Implement fixed-width pad transforms after same-run A/B showed an improvement.
+- [x] Run crypto vectors, constant-time checks, and full CI; PR #30 merged.
 
 ### Task 3: Eight-block GHASH experiment
 
-- [ ] Add benchmarks for short and long records.
-- [ ] Implement H^1..H^8 setup and eight-block folding behind a validated path only if results improve.
-- [ ] Run AES-GCM boundary/Wycheproof tests, constant-time checks, and full CI; submit a focused PR.
+- [x] Add benchmarks for short and long records.
+- [x] Implement H^1..H^8 setup and eight-block folding after same-run A/B showed gains for larger cached records.
+- [x] Run AES-GCM boundary/Wycheproof tests, constant-time checks, and full CI; PR #31 merged.
 
 ### Task 4: Single-record sealing setup reuse
 
-- [ ] Measure `seal` versus `seal_cached` and the end-to-end single-record send path.
-- [ ] Design a cache only if measurements justify it and key lifetime, processor ownership, and invalidation can be proved.
-- [ ] If safe and beneficial, add explicit cache-miss, key-change, and reuse tests; otherwise document why no code change is retained.
+- [x] Compare fresh `seal` with `seal_cached`; trace the single-record send path to determine whether a one-entry cache can hit.
+- [x] Reject a cache: the ordinary request path alternates client-key decryption and server-key encryption through the same per-CPU RK/HTAB scratch, so a one-entry cache is displaced on each direction change. `sendrun` already uses `seal_cached` for consecutive records under one key.
+- [x] Retain no cache code. Per the user's direction that target-host benchmarking is not needed currently, no end-to-end NIC benchmark was collected; a two-entry cache was not justified by the available evidence and would add more key schedule state.
 
 ### Task 5: HOT layout search
 
-- [ ] Measure current image sizes and HOT padding across default, IPv4, and IPv6 builds.
-- [ ] Search safe routine orderings and validate all candidates with the existing assembler alignment checker.
-- [ ] Submit a focused PR only if all variants improve without changing behavior.
+- [x] Measure image sizes and HOT alignment across default, IPv4, and IPv6 builds.
+- [x] Search all six routine orderings and validate them with the assembler alignment checker; no ordering improved all variants, so none was retained.
+- [x] No routine-order PR was warranted. Separately, PR #32 corrected HOT phases after GHASH folding introduced boundary jumps; the merged mask clears the full HOT list in all three build variants.
+
+## Results
+
+- **HMAC, PR #30:** five alternating same-run samples on Intel Xeon 6975P-C showed HMAC-SHA256 improvements of 8.6% (50-byte message) and 7.2% (64-byte message); combined handshake timing was unchanged. Full CI and review passed. Merged as `c8b280f`.
+- **GHASH, PR #31:** on Intel Xeon 6975P-C, cached 512/1024/1418-byte records improved 13.2%/15.4%/16.4%; fresh 64/180-byte records regressed 11.0% each, while fresh 512/1024/1418-byte records improved 1.0%/6.3%/7.8%. Combined handshake timing changed by -0.3%. The PR description records the small-record tradeoff. Full CI and review passed. Merged as `d11b12d`.
+- **Single-record cache:** no cache was retained for the call-path and scratch-state reasons above. The end-to-end server path was not benchmarked; this remains a limit on workload-specific conclusions.
+- **Layout search:** six routine permutations were built in default, IPv4, and IPv6 variants. No ordering reduced image size across all variants. The two best no-warning orders were A/B measured on Intel Xeon 6975P-C and AMD EPYC 9V74; neither had a balanced performance gain.
+- **HOT phase correction, PR #32:** same-run AMD EPYC 7763 comparison showed handshake crypto effectively unchanged (161572 to 161569 cycles, -0.0%) and isolated HMAC/SHA slowdowns of 3.3–5.0%; this runner does not model Skylake boundary-jump behavior, so no general speedup is claimed. Default, IPv4, and IPv6 builds and full HOT checks passed; fresh review found no semantic or security changes. Full CI passed before merge. Merged as `beb4fd3`.
