@@ -21,7 +21,7 @@ repeating hardware source still prevents a handshake from using weak randomness.
 
 ## 2. Recover multiple lost segments without waiting one round trip per loss
 
-**Status: implementation merged in PR #23; SACK cursor field-alias follow-up is in PR #25.** The
+**Status: implementation merged in PR #23; the SACK cursor field-alias fix merged in PR #25.** The
 6 MiB, 1% loss comparison improved from a 20.75 s
 baseline median to 17.68 s on ARM64 WSL/QEMU TCG; this is an emulated result, not a cx23
 measurement. The cursor uses unused AES-128 client-key bytes, separate from RTT and RTO state,
