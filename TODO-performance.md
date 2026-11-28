@@ -30,8 +30,8 @@ so connection-slot size is unchanged.
 Target: shorten large-transfer completion time on lossy paths while keeping connection state
 small.
 
-Before PR #23, k18 did not use SACK. When several segments were lost in one window, it repaired them one
-round trip at a time. In the current 6 MiB tests, a 20 Mbit/s path with a 200-packet queue,
+Before PR #23, k18 did not use SACK. When several segments were lost in one window, it repaired
+them one round trip at a time. In the current 6 MiB tests, a 20 Mbit/s path with a 200-packet queue,
 50 ms round trip, and 1% loss takes 14–19 seconds. Explore SACK or another compact way to
 identify missing segments and selectively rebuild them from the image.
 
