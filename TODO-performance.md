@@ -60,7 +60,7 @@ baseline collected after restoring the sender. An
 ACK-based burst cap took 113.42 seconds; one-tick pacing took 34.75 seconds; five-tick pacing
 took 46.47 seconds. These timings are emulated and the experimental runs did not include a
 verified file hash, so they are directional only. None showed a queue-10 gain worth keeping.
-CI includes queue-10 and queue-60 no-loss controls, seeded sparse and 1% loss cases, and seeded
-queue-60 reordering as correctness and file-integrity checks. Revisit only with a pacing signal
+CI includes queue-10 and large-queue no-loss controls, sparse and 1% loss cases, and queue-60
+reordering as correctness and file-integrity checks. Revisit only with a pacing signal
 that can distinguish path capacity from delay and queue pressure, then remeasure against the
 cx23 large-file result before retaining a change.
