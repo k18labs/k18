@@ -25,6 +25,13 @@ static u32 sl(u8 *o, const u8 *m, u32 n, const u8 *kiv, u32 seq)
     __asm__ volatile("clc\n\tcall seal" : "+D"(e), "+S"(m), "+c"(n), "+b"(kiv), "+d"(seq), "+a"(type) : : SCRATCH); /* CF = 0: encrypt */
     return e - o;
 }
+static u32 slc(u8 *o, const u8 *m, u32 n, const u8 *kiv, u32 seq)
+{
+    u8 *e = o;
+    u32 type = m[--n];
+    __asm__ volatile("clc\n\tcall seal_cached" : "+D"(e), "+S"(m), "+c"(n), "+b"(kiv), "+d"(seq), "+a"(type) : : SCRATCH);
+    return e - o;
+}
 /* what a record held (n bytes at c, between header and tag), decrypted, and the tag it should have had */
 static u32 op(u8 *o, const u8 *c, u32 n, const u8 *kiv, u32 seq)
 {

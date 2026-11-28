@@ -159,9 +159,11 @@ ct: $(B)/ct
 	@echo "ok   nothing jumps on or indexes with a secret (and each of six controls that does is noticed)"
 
 # what the curve and hash code cost natively (the same object the tests use, timed on this host)
-bench: $(B)/test_asm test/bench.c
+$(B)/bench_asm: $(B)/test_asm test/bench.c
 	umask 077; $(HOSTCC) -o $(B)/bench_asm test/bench.c $(B)/os_host.o
 	@chmod go= $(B)/bench_asm
+
+bench: $(B)/bench_asm
 	$(B)/bench_asm
 
 .PHONY: all test outside ct bench FORCE
