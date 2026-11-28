@@ -253,9 +253,9 @@ segment i can be built at any time from those three values and i.
   shift, kept in the top four bits of `C_FL2`) and `C_CW` segments: 10 at first; one more
   per segment acknowledged while nothing has been lost and under 64 KB is in flight
   (doubling every round trip); halved after a loss (2 at least); then one more per
-  16 KiB acknowledged. Past 64 KB (the maximum without window scaling) only while
-  the connection has never lost anything (after its first loss, 64 KB at most for
-  good), by one segment per 64 KiB acknowledged, up to 255 segments. A new response
+  16 KiB acknowledged. An unlost connection may exceed 64 KB, adding a segment per
+  64 KiB acknowledged, up to 255 segments. After its first loss, in-flight data is
+  capped at 128 KB. A new response
   starts at 64 KB at most (44 segments). Why: `bench/README.md`, "Over a distance".
   A record goes whole or not at all, and none that would end past the edge of the
   client's window: a client need not take a segment that does (Linux since 6.17 drops

@@ -91,7 +91,7 @@ handshake timing, or image size.
 
 ## 5. Measure TCP recovery on high-latency lossy paths
 
-**Status: investigation found a repeatable slowdown under emulation; added CI transfer coverage and per-transfer client TCP counters. No TCP algorithm change is justified yet.**
+**Status: 128 KiB post-loss flight cap tested in two baseline and two candidate GitHub Actions CI runs; candidate PR pending.**
 
 At 20 Mbit/s, a 2,000-packet queue, and 100 ms round-trip time, a 6 MiB download took
 5.94 seconds without loss and 34.06/33.88 seconds with deterministic 1% loss (`BSEED=7`)
@@ -101,9 +101,12 @@ classified three retransmissions as RTOs, but the capture did not establish that
 timer fired. Emulation and capture overhead affect the timing; this is not a target-CPU
 measurement or proof of a TCP defect.
 
-One GitHub Actions run measured 5.89 s without loss and 42.63 s with 1% loss at these
-settings; both SHA-256 checks passed. Loss is stochastic, so these timings are one
-observation and CI has no timing threshold. GitHub runners use a
+Two GitHub Actions CI runs on the current 64 KiB cap measured a median of 36.08 s with
+1% loss at 100 ms RTT and 5.91 s without loss. Two runs with a 128 KiB cap measured
+26.44 s with loss and 5.93 s without loss. At 50 ms RTT and 1% loss, the medians were
+21.74 s before and 15.06 s after. All downloads passed their SHA-256 checks and the full
+CI runs passed. This is a CI network-emulation result, not a target-server CPU benchmark.
+Loss is stochastic and CI has no timing threshold. GitHub runners use a
 `tc netem` version that rejects the optional `seed` argument, so CI uses stochastic loss;
 the seeded case remains a local repeatability tool where supported. `tools/bneck.sh`
 reports client-side out-of-order and DSACK counters separately from actual bottleneck qdisc
@@ -119,7 +122,7 @@ but each followed an ACK with SACK information by less than 1 ms. Those events a
 with ACK/SACK recovery, so the tool's RTO labels do not confirm timer-triggered retransmission.
 The source has a selective retransmit path that waits for at least three later segments to
 be SACKed, plus an RTO path with a 250 ms floor; after loss it halves the congestion window
-and limits outstanding data to 64 KiB. The capture shows loss recovery and a conservative
-post-loss sending limit, but no correctness failure. A controlled one-hole/two-hole test
-that varies whether three later segments arrive would give clearer timer evidence before
-changing this logic.
+and now caps outstanding data at 128 KiB. The tested cap reduced completion times on the
+two lossy CI cases without changing the no-loss control materially. The available runs do
+not establish target-server performance; retain the old limit if target-host results
+contradict this CI result.

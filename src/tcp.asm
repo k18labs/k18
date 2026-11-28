@@ -873,7 +873,7 @@ tcp:
         shl eax, cl             ; windows were scaled: beyond it we only feel our way
         test byte [rbp+C_FL2], F_CA ; while nothing is lost),
         jz .wf
-        mov edx, 0xFFFF
+        mov edx, 0x1FFFF
         cmp eax, edx
         cmova eax, edx
 .wf:    mov ecx, [TXM]
