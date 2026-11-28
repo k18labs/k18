@@ -5,6 +5,8 @@ points for comparison, not promised gains.
 
 ## 1. Reduce random-number generation cost on slower supported CPUs
 
+**Status: complete — PR #22 merged.**
+
 Target: reduce the roughly 42,000 cycles of `rdrand` work per handshake measured on Zen 2,
 without weakening nonce freshness or the existing stuck/repeated-output health check.
 
@@ -18,6 +20,10 @@ after. Keep the crypto vectors and constant-time checks passing, and verify that
 repeating hardware source still prevents a handshake from using weak randomness.
 
 ## 2. Recover multiple lost segments without waiting one round trip per loss
+
+**Status: complete — PR #23 merged.** The 6 MiB, 1% loss comparison improved from a 20.75 s
+baseline median to 17.68 s on ARM64 WSL/QEMU TCG; this is an emulated result, not a cx23
+measurement. SACK state reuses unused AES-128 client-key bytes, so connection-slot size is unchanged.
 
 Target: shorten large-transfer completion time on lossy paths while keeping connection state
 small.
@@ -33,6 +39,8 @@ budget explicit and confirm recovery does not resend data the client already has
 
 ## 3. Pace large response bursts for shallow queues
 
+**Status: evaluation complete; no sender change retained.**
+
 Target: reduce loss and completion time on shallow-queue paths without reducing throughput on
 well-provisioned paths.
 
@@ -44,3 +52,12 @@ changing the send path.
 Compare the shallow-queue and lossy cases with the current 64-connection large-file result
 (about 1.2 GB/s on the measured cx23). Keep changes only if they improve the constrained paths
 without a material regression on the high-throughput path.
+
+ARM64 Kali WSL/QEMU TCG queue-10 runs took 34.48 and 36.67 seconds before changes. An
+ACK-based burst cap took 113.42 seconds; one-tick pacing took 34.75 seconds; five-tick pacing
+took 46.47 seconds. These timings are emulated and the experimental runs did not include a
+verified file hash, so they are directional only. None showed a queue-10 gain worth keeping.
+CI now includes the queue-10 transfer as a correctness and file-integrity control alongside the
+queue-60 reordering and queue-200 loss cases. Revisit only with a pacing signal that can
+distinguish path capacity from delay and queue pressure, then remeasure against the cx23
+large-file result before retaining a change.
