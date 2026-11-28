@@ -221,7 +221,7 @@ round trip. A window that doubled every round trip up to 367 KB lost 91 segments
 on a path that held less, and took 23.6 s for 6 MiB. So:
 - the window doubles up to 64 KB, then grows by a segment for every 64 KiB acknowledged;
 - a response begins with 64 KB at most;
-- a connection that has lost anything once stays at 64 KB;
+- after its first loss, a connection's in-flight data is capped at 128 KB;
 - several losses in one window are repaired one round trip each, not one timer each.
 
 6 MiB through emulated paths (`tools/bneck.sh`; an image without TSO, so a frame is a
