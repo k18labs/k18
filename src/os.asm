@@ -340,11 +340,11 @@ F_CA    equ 8               ;   ClientHello; F_CA (after it): something was lost
                             ;   connection once.
 C_CW    equ 39              ; a byte: so many segments of a response may be on their way (`tcp.tx`)
 C_KIV   equ 40              ; our application key | iv (44 bytes), then the client's
-C_T0    equ 100             ; (In the client's 44, where AES-128 has no use for 16 bytes of a
-C_SACK  equ C_T0             ;   completed handshake, this is a cursor in the client's unused AES-128 key half
-C_RTO   equ 104             ;   key's 32:) when our flight went out (0: its round trip has
-                            ;   been taken), and how long this connection's timer waits
-                            ;   the first time, in units of 1/64 s (`tarm`)
+C_T0    equ 100             ; when our flight went out (0: its round trip has been taken)
+C_RTO   equ 104             ; how long this connection's timer waits: a quarter of a
+                            ;   second the first time, in units of 1/64 s (`tarm`)
+C_SACK  equ 108             ; cursor at byte 24 of the client's unused AES-128 key half
+                            ; (`C_KIV+44+16..31`), away from `C_T0` and `C_RTO`
 TSLOT   equ 128
 F_SACK  equ 1                ; C_FL2 bit 0: an application request arrived; the TLS SACK cursor is ready
 
