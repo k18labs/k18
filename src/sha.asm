@@ -172,24 +172,37 @@ hmac:
         rep movsb
         mov esi, ebx
         mov edi, HB
-        mov cl, 64
-.k:     xor eax, eax
-        cmp cl, 32
-        jbe .z
-        lodsb
-.z:     xor al, 0x36
-        stosb
-        dec ecx
-        jnz .k
+        mov eax, 0x36363636
+        movd xmm2, eax
+        pshufd xmm2, xmm2, 0
+        movdqu xmm0, [rsi]
+        pxor xmm0, xmm2
+        movdqu [rdi], xmm0
+        movdqu xmm0, [rsi+16]
+        pxor xmm0, xmm2
+        movdqu [rdi+16], xmm0
+        movdqu [rdi+32], xmm2
+        movdqu [rdi+48], xmm2
         pop rcx
         add ecx, 64
         mov esi, HB
         lea edi, [rsi+64]
         call sha256             ; inner hash
-        mov cl, 64
-.o:     xor byte [HB+rcx-1], 0x36 ^ 0x5c
+        mov eax, 0x6A6A6A6A     ; 0x36 ^ 0x5c: turn the inner pad into the outer pad
+        movd xmm1, eax
+        pshufd xmm1, xmm1, 0
+        mov esi, HB
+        mov edi, HB
+        push 4
+        pop rcx
+.o:     movdqu xmm0, [rsi]
+        pxor xmm0, xmm1
+        movdqu [rdi], xmm0
+        add esi, 16
+        add edi, 16
         dec ecx
         jnz .o
+        mov esi, HB
         mov cl, 96
         pop rdi
         call sha256             ; outer hash

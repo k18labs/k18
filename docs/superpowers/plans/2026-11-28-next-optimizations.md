@@ -31,7 +31,8 @@
 
 - [x] Add HMAC, additional GCM record sizes, and fresh-versus-cached seal timing to the native benchmark.
 - [x] Add a manually triggered x86 workflow that builds both refs on one runner and stores raw benchmark output.
-- [ ] Run baseline comparison and record processor plus result spread.
+- [x] Run baseline self-comparison and verify the runner end to end (AMD EPYC 7763,
+  pinned logical CPU 0; workflow exit 0, artifact uploaded; median/MAD output produced).
 
 ### Task 2: SIMD HMAC pad transforms
 
