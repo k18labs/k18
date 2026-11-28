@@ -346,7 +346,7 @@ C_RTO   equ 104             ;   key's 32:) when our flight went out (0: its roun
                             ;   been taken), and how long this connection's timer waits
                             ;   the first time, in units of 1/64 s (`tarm`)
 TSLOT   equ 128
-F_SACK  equ 1                ; C_FL2 bit 0: the SYN cookie negotiated SACK-permitted
+F_SACK  equ 1                ; C_FL2 bit 0: an application request arrived; the TLS SACK cursor is ready
 
 ; What 32-bit code calls pushad and popad: the seven registers of old besides rsp (so the
 ; one a routine returns is at [rsp+48] for eax, [rsp+24] for ebx, [rsp+16] for ebp,
@@ -660,6 +660,8 @@ DHHLEN  equ $ - DHHDR
 %ifdef OURIP6
 IP6:    dq IP6A, IP6B           ; our IPv6 address (make IP6=...)
 %endif
+SYNOPT: db 2, 4, 1460 >> 8, 1460 & 255 ; maximum segment size: what fits an Ethernet frame
+        db 1, 3, 3, 0           ; (padding,) window scale: ours is not shifted
 SYNOPT_SACK: db 2, 4, 1460 >> 8, 1460 & 255, 4, 2, 1, 1
 SYNOPT_BOTH: db 2, 4, 1460 >> 8, 1460 & 255, 4, 2, 1, 1, 1, 3, 3, 0
 MSSTAB: dw 216, 536, 1220, 1440 ; the sizes we cut our segments to (the client's, rounded down)

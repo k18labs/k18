@@ -49,6 +49,12 @@ jobs:
         run: sudo unshare -n -- tools/tlsfuzz.sh
       - name: Check TCP acknowledgement and pipelining cases
         run: sudo unshare -n -- ./tap.sh python3 tools/acktest.py
+      - name: Check transfers with loss and packet reordering
+        run: |
+          python3 tools/mksite.py build-bneck/www 6
+          make B=build-bneck SITE=build-bneck/www NOTSO=1
+          sudo unshare -n -- env B=build-bneck BRATE=20 BQUEUE=200 BDELAY=25 BLOSS=1 BSEED=7 ./tap.sh tools/bneck.sh /big.bin 1
+          sudo unshare -n -- env B=build-bneck BRATE=20 BQUEUE=60 BDELAY=25 BREORDER=25 BSEED=7 ./tap.sh tools/bneck.sh /big.bin 1
       - name: Build IPv6 protocol test image
         run: |
           python3 tools/mksite.py build-site6/www 1.5

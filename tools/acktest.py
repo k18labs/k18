@@ -140,7 +140,7 @@ class Raw:
         if syn:
             opts = self.syn_options
             got_sack = has_option(opts, 4)
-            check("server advertises SACK receive support", got_sack)
+            check("TLS server advertises SACK receive support only for TLS", got_sack == (port == 443))
             self.send(0x10, self.iss + 1)       # (the ack that makes the connection)
             self.got(0.05)
 

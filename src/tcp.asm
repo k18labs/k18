@@ -219,14 +219,23 @@ tcp:
         sbb eax, -1
 .six:   lea eax, [rax+r8*4]
         xchg eax, edx
-        mov al, 0x12            ; SYN|ACK. Advertise SACK receive support: it lets the client
-        mov esi, SYNOPT_SACK    ; report received ranges for the data we send. Window scale
-        push 8                  ; is independent and is included only when the client asked.
+        mov al, 0x12            ; SYN|ACK. SACK-permitted lets the client report received
+        cmp byte [rbx+P_PORTS+2], bl ; ranges on TLS flights; port 80 has no TLS key slot
+        je .p80
+        mov esi, SYNOPT_SACK
+        push 8
         pop rcx
         test r8d, r8d
         jz .seg
         mov esi, SYNOPT_BOTH
         mov cl, 12
+        jmp .seg
+.p80:   mov esi, SYNOPT
+        push 4
+        pop rcx
+        test r8d, r8d
+        jz .seg
+        mov cl, 8
 .seg:   jmp tcp_seg
 .deny:  count 2
         mov al, 0x14            ; RST|ACK: connection refused
@@ -307,7 +316,6 @@ tcp:
         mov [rbp+C_FLG], dl
         mov [rbp+C_SND], eax
         mov [rbp+C_ACK], eax
-        or byte [rbp+C_FL2], F_SACK
 
         ; Whose segment it is. The client's begins within what we take at once (64 KB)
         ; of what we expect next, before it or behind: early, late, or sent again. And
@@ -811,16 +819,18 @@ tcp:
         mov byte [rbp+C_CW], 2
 .ca:    test byte [rbp+C_FL2], F_CA
         jnz .cas
-        mov eax, [rbp+C_ACK]
-        mov [rbp+C_SACK], eax
         test byte [rbp+C_FL2], F_SACK
         jz .cas
+        mov eax, [rbp+C_ACK]
+        mov [rbp+C_SACK], eax
         or byte [rbx+P_EV], E_SACK
 .cas:   or byte [rbp+C_FL2], F_CA
 .rtx:   or byte [rbp+C_FLG], F_DUP3
         count 4
         test byte [rbx+P_EV], E_RTO
         jz .sacktry
+        test byte [rbp+C_FL2], F_SACK
+        jz .resendack
         mov eax, [rbp+C_ACK]
         mov [rbp+C_SACK], eax
         jmp .resendack
@@ -836,7 +846,7 @@ tcp:
         test byte [rbx+P_EV], E_DUP
         jz .resendack
         call .sackrtx
-        test r9d, r9d
+        test r10d, r10d        ; only suppress Reno's retransmit if SACK sent a hole
         jnz .pump
         jmp .resendack
 .sackfirst:
@@ -1003,7 +1013,7 @@ tcp:
 
 ; .sackrtx: use this ACK's SACK blocks as a bounded scoreboard. C_SACK is a cursor in the
 ; current flight, stored in the completed handshake's no-longer-needed RTT slot. Only
-; retransmit a hole after at least three segments beyond it have been reported received.
+; retransmit a hole only after three segments beyond it have been reported received.
 .sackrtx:
         push r12
         push r13

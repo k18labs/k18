@@ -146,6 +146,9 @@ record: pushad
         jb .st
 .last:  or byte [rbp+C_FLG], F_CLOSED
 .st:    inc dword [rbp+C_ST]
+        mov eax, [rbp+C_ACK]
+        mov [rbp+C_SACK], eax
+        or byte [rbp+C_FL2], F_SACK
 .no:    clc
         popad
         ret
