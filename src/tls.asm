@@ -71,6 +71,14 @@ handshake:
         mov r9d, edi            ; (the compression methods: see `.seen`)
         movzx ecx, byte [rdi]   ; compression methods, and the extensions' length
         lea edi, [rdi+rcx+3]
+        cmp edi, ebx            ; The extension vector length is exactly what remains
+        ja .seen                ; after its two-byte length field.
+        movzx eax, word [rdi-2]
+        xchg al, ah
+        mov esi, ebx
+        sub esi, edi
+        cmp eax, esi
+        jne .badext
 .ext:   lea esi, [rdi+4]
         cmp esi, ebx
         ja .seen
@@ -174,6 +182,9 @@ handshake:
         or byte [rbp+C_FLG], F_CLOSED ; (our FIN goes with it: `tcp.fin`)
         pop rbp
         ret
+.badext: pop rsi
+        mov al, 50              ; malformed extensions vector (decode_error)
+        jmp .alert
 .has:   mov eax, r11d
         push rax                ; (the key is 4 bytes on from there)
         push rsi
