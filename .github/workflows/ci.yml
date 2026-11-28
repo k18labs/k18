@@ -20,6 +20,8 @@ jobs:
             brotli qemu-system-x86 iproute2 iptables libc6-dbg
       - name: Build image
         run: make
+      - name: Check TCP per-connection state layout
+        run: python3 test/test_tcp_state.py
       - name: Build fixed IPv4 and IPv6 variants
         run: |
           make B=build-ip CERT=cert IP=192.0.2.15
