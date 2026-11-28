@@ -1,6 +1,6 @@
 ; aesgcm.asm: AES-128-GCM. A part of os.asm, which includes it.
 ; ----------------------------------------------------------------------------
-        HOT 0xFE0E7F03          ; H^1..H^8 loop and `ks64`, after the wider GHASH fold
+        HOT 0x06006000          ; H-power setup, ks64, and seal_sb entry/exit branches
 ; seal: a TLS 1.3 record at rdi for the ecx bytes at rsi and, behind them inside it, the
 ; byte al that says what they are, under AES-128-GCM; key | iv at rbx (the key's 16
 ; bytes, 16 more, and 12), number edx. Returns rdi = the record's end.
