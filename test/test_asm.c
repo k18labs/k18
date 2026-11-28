@@ -144,8 +144,8 @@ int main(int argc, char **argv)
     ex(h, m, "\x20\x07" "derived", m + 100);
     hex("expand", h, 32);
     for (i = 0; i < 32; i++) kiv[i] = m[300 + i], kiv[32 + i] = m[400 + i];
-    for (i = 0; i < 10; i++) {       /* AES-128-GCM */
-        u32 n = (u32[]){1, 100, 1500, 15, 16, 17, 63, 64, 65, 128}[i], L;
+    for (i = 0; i < 14; i++) {       /* AES-128-GCM */
+        u32 n = (u32[]){1, 100, 1500, 15, 16, 17, 63, 64, 65, 128, 79, 80, 95, 96}[i], L;
         char t[32];
         L = sl(out, m, n, kiv, i * 77);
         sprintf(t, "gcm%u_%u", n, i * 77);

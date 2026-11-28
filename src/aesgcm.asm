@@ -39,7 +39,7 @@ seal:   pushad
         movdqa [TAGM], xmm1
         pshufb xmm0, xmm7       ; As a number (bytes reversed) H is kept times x: one bit
         movq rax, xmm0          ; to the left, and the bit that leaves at the top comes
-        pextrq rdx, xmm0, 1     ; back as 0xC2..01; then H^2, H^3 and H^4, for four blocks
+        pextrq rdx, xmm0, 1     ; back as 0xC2..01; then H^2 through H^8, for eight blocks
         add rax, rax            ; at a time
         adc rdx, rdx
         sbb rcx, rcx
@@ -50,11 +50,11 @@ seal:   pushad
         pinsrq xmm2, rdx, 1
         mov ebx, HTAB
         mov edi, ebx
-        mov cl, 4
+        mov cl, 8
 .hp:    movdqa [rdi], xmm2
         pshufd xmm0, xmm2, 0x4E
         pxor xmm0, xmm2
-        movdqa [rdi+64], xmm0
+        movdqa [rdi+128], xmm0
         dec cl
         jz seal_sb
         movdqa xmm0, xmm2
@@ -188,11 +188,11 @@ seal_sb: mov rdi, [rsp]         ; o
 %ifdef HOST
         call haad               ; (the tests may have other bytes hashed than a header's)
 %endif
-        ; GHASH of the ebp blocks at SB, up to four at a time: (y ^ b0) H^m ^ ... ^ b_{m-1} H
+        ; GHASH of the ebp blocks at SB, up to eight at a time: (y ^ b0) H^m ^ ... ^ b_{m-1} H
         ; in GF(2^128), reduced once.
         mov ebx, HTAB
         pxor xmm2, xmm2
-.g4:    mov eax, 4
+.g8:    mov eax, 8
         cmp ebp, eax
         cmovb eax, ebp
         sub ebp, eax
@@ -202,7 +202,7 @@ seal_sb: mov rdi, [rsp]         ; o
         pxor xmm0, xmm2
         call gh1
         test ebp, ebp
-        jnz .g4
+        jnz .g8
         pshufb xmm2, xmm7
         pxor xmm2, [TAGM]
         movdqu [rdi], xmm2
@@ -248,7 +248,7 @@ gh1:    pxor xmm1, xmm1
         pxor xmm2, xmm5
         pshufd xmm5, xmm0, 0x4E
         pxor xmm0, xmm5
-        pclmulqdq xmm0, [rbx+rax+64], 0x00
+        pclmulqdq xmm0, [rbx+rax+128], 0x00
         pxor xmm3, xmm0
         jnz .gn
         pxor xmm3, xmm1
