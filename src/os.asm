@@ -130,7 +130,7 @@ RK      equ BSS + 0x0CE00   ; AES-128: the eleven round keys of the record at ha
 NB      equ RK + 176        ;   its counter block (nonce | counter),
 TAGM    equ NB + 16         ;   what its tag is masked with,
 BSWAPM  equ TAGM + 16       ;   how pshufb reverses 16 bytes (made at boot)
-HTAB    equ BSWAPM + 16     ; GHASH: H^1 .. H^4 (each times x), then their halves xored
+HTAB    equ BSWAPM + 16     ; GHASH: H^1 .. H^8 (each times x), then their halves xored
 SLOTS   equ BSS + 0x0D500   ; key schedule values, 8 x 32 bytes, addressed from ebp
 KH      equ BSS + 0x0D600   ; handshake traffic key | iv
 CVB     equ BSS + 0x0D680   ; CertificateVerify content to be signed (+ room for padding)
