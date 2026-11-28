@@ -96,10 +96,10 @@ handshake timing, or image size.
 At 20 Mbit/s, a 2,000-packet queue, and 100 ms round-trip time, a 6 MiB download took
 5.94 seconds without loss and 34.06/33.88 seconds with deterministic 1% loss (`BSEED=7`)
 in ARM64 Kali WSL/QEMU TCG. Both cases verified the downloaded SHA-256. The loss run's
-packet capture showed 16 retransmissions, 12 fast retransmissions, 3 retransmission
-timeouts, and 412 duplicate ACKs. This points to slow recovery after loss at higher RTT,
-but emulation and capture overhead affect the timing; it is not yet a confirmed target-CPU
-performance result or proof of a TCP defect.
+packet capture showed retransmissions and many duplicate ACKs. Its first TShark summary
+classified three retransmissions as RTOs, but the capture did not establish that k18's
+timer fired. Emulation and capture overhead affect the timing; this is not a target-CPU
+measurement or proof of a TCP defect.
 
 One GitHub Actions run measured 5.89 s without loss and 42.63 s with 1% loss at these
 settings; both SHA-256 checks passed. Loss is stochastic, so these timings are one
@@ -111,3 +111,15 @@ drops. Linux client counters do not observe retransmissions from the k18 custom 
 use packet captures (CAP with tools/tl.py) for those. Compare CI timings across runs;
 trace which loss-recovery path accounts for the timeouts before changing retransmission,
 congestion-control, or pacing behavior. Keep full-file hash verification in every case.
+
+A follow-up capture at the server TAP and client reproduced a 36.35 s lossy transfer with
+41 bottleneck drops; a captured no-loss control took 6.11 s with no drops. Both downloads
+verified their hashes. In the lossy trace, TShark marked three data retransmissions as RTOs,
+but each followed an ACK with SACK information by less than 1 ms. Those events are consistent
+with ACK/SACK recovery, so the tool's RTO labels do not confirm timer-triggered retransmission.
+The source has a selective retransmit path that waits for at least three later segments to
+be SACKed, plus an RTO path with a 250 ms floor; after loss it halves the congestion window
+and limits outstanding data to 64 KiB. The capture shows loss recovery and a conservative
+post-loss sending limit, but no correctness failure. A controlled one-hole/two-hole test
+that varies whether three later segments arrive would give clearer timer evidence before
+changing this logic.
