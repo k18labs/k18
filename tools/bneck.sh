@@ -22,7 +22,11 @@ RATE=${BRATE:-20} QUEUE=${BQUEUE:-60} DELAY=${BDELAY:-25} LOSSP=${BLOSS:-0} SEED
 ip link add vA type veth peer name vB
 ip link add br0 type bridge
 ip link set br0 type bridge stp_state 0 forward_delay 0
-for a in $(ip -4 -o addr show dev k2t | awk '{print $4}'); do ip addr del "$a" dev k2t; ip addr add "$a" dev vB; done
+# Save all addresses before clearing the TAP. Deleting its primary IPv4 address
+# first can also remove its secondary addresses when promote_secondaries is off.
+mapfile -t CLIENT_ADDRS < <(ip -4 -o addr show dev k2t | awk '{print $4}')
+ip -4 addr flush dev k2t scope global
+for a in "${CLIENT_ADDRS[@]}"; do ip addr add "$a" dev vB; done
 ip link set k2t master br0
 ip link set vA master br0
 for d in br0 vA vB k2t; do ip link set $d up; ethtool -K $d tso off gso off gro off >/dev/null 2>&1; done
