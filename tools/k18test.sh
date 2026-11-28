@@ -14,6 +14,8 @@
 # of deploy --grub is seen here, with an ssh that is made up: a machine that answers but
 # not to us is said to, with what ssh said, and is not reset.)
 cd "$(dirname "$0")/.." || exit 1
+packval() { printf '%s' "$1" | base64 | tr -d '\n'; }
+packget() { awk -F '\t' -v key="$1" '$1 == key { print $2 }' "$2" | base64 -d; }
 PORT=${PORT:-8513}
 OUT=build-k18test CERT=cert-k18test
 mkdir -p $OUT $CERT
@@ -82,8 +84,9 @@ R=$(curl -s --max-time 5 -o /dev/null -w '%{http_code} %{redirect_url}' "http://
 check "port 80 sends everybody to the name ($R)" "$([[ $R == "301 https://k18cli.test/" ]] && echo ok)"
 P="$(stat -c %a $OUT/os.bin) $(stat -c %a $OUT/disk.img) $(stat -c %a $OUT/regs.inc) $(stat -c %a $CERT/server.key) $(stat -c %a $OUT)"
 check "image, disk, key and their folder are their owner's alone ($P)" "$([[ $P == "600 600 600 600 700" ]] && echo ok)"
-check "how it was packed is kept for renew" "$(grep -q 'X-Test' $OUT/pack.conf && grep -q '^hsts=300$' $OUT/pack.conf && grep -q '^p80=redirect$' $OUT/pack.conf &&
-  grep -q '^sans=also.k18cli.test$' $OUT/pack.conf && echo ok)"
+check "how it was packed is kept for renew" "$( [[ $(packget headers "$OUT/pack.conf") == *'X-Test: yes'* &&
+  $(packget hsts "$OUT/pack.conf") == 300 && $(packget p80 "$OUT/pack.conf") == redirect &&
+  $(packget sans "$OUT/pack.conf") == also.k18cli.test ]] && echo ok)"
 check "pack says nothing about names when the certificate has them all" "$(grep -q "is not for" $OUT/pack.out || echo ok)"
 # renew: 192.0.2.1 is nobody's address; none of this may so much as try to reach it
 K0=$(sha256sum < $CERT/server.key)
@@ -119,7 +122,7 @@ rm -f $OUT2.out
 # An IP address is a SAN, never a Subject CN (Let's Encrypt rejects IP CNs).
 OUT3=build-k18iptest
 mkdir -p $OUT3
-sed 's/^name=.*/name=192.0.2.7/' $OUT/pack.conf > $OUT3/pack.conf
+{ sed '/^name[[:space:]]/d' "$OUT/pack.conf"; printf 'name\t%s\n' "$(packval 192.0.2.7)"; } > $OUT3/pack.conf
 R=$(./k18 renew 192.0.2.1 $OUT3 --force --dry-run 2>&1)
 check "an IP address stays in SAN and out of the Subject CN ($R)" \
   "$([[ $R == *'IP:192.0.2.7'* && $R != *'CN'*'192.0.2.7'* ]] && echo ok)"
@@ -127,8 +130,10 @@ check "an IP address stays in SAN and out of the Subject CN ($R)" \
 OUT4=build-k18renew-fail CERT4=cert-k18renew-fail
 rm -rf $OUT4 $CERT4
 mkdir -p $OUT4 $CERT4 $OUT4/bin $CERT4/test-ca
-printf 'site=/no/such/k18-test-site\nname=renew.k18cli.test\nip=\ncert=%s\np80=redirect\nhsts=0\ncache=600\nheaders=\nsans=\ncompress=1\nip6=\n' \
-  "$(pwd)/$CERT4" > $OUT4/pack.conf
+printf 'site\t%s\nname\t%s\nip\t%s\ncert\t%s\np80\t%s\nhsts\t%s\ncache\t%s\nheaders\t%s\nsans\t%s\ncompress\t%s\nip6\t%s\n' \
+  "$(packval /no/such/k18-test-site)" "$(packval renew.k18cli.test)" "$(packval '')" "$(packval "$(pwd)/$CERT4")" \
+  "$(packval redirect)" "$(packval 0)" "$(packval 600)" "$(packval '')" "$(packval '')" "$(packval 1)" "$(packval '')" \
+  > $OUT4/pack.conf
 printf 'test image' > $OUT4/os.bin
 printf 'renew.k18cli.test\n' > $OUT4/name
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
@@ -167,8 +172,14 @@ check "a failed first renewal still starts the old image ($(tail -n 2 $OUT4/rene
   "$([[ $RENEW_RC != 0 && -s $OUT4/ssh.log ]] && grep -q 'cat > /boot/k18.bin.new' $OUT4/ssh.log && echo ok)"
 # --no-compress: every file once, as it is; and renew would pack it that way again
 ./k18 pack $OUT/www -n k18priv.test -c $CERT2 -o $OUT2 --no-compress > /dev/null 2>&1
-check "with --no-compress nothing is packed twice" "$(! grep -q 'Content-Encoding' $OUT2/site.json && grep -q '^compress=0$' $OUT2/pack.conf &&
-  grep -q 'Content-Encoding' $OUT/site.json && grep -q '^compress=1$' $OUT/pack.conf && [[ $(stat -c %s $OUT2/site.bin) -lt $(stat -c %s $OUT/site.bin) ]] && echo ok)"
+check "with --no-compress nothing is packed twice" "$(! grep -q 'Content-Encoding' $OUT2/site.json && [[ $(packget compress "$OUT2/pack.conf") == 0 ]] &&
+  grep -q 'Content-Encoding' $OUT/site.json && [[ $(packget compress "$OUT/pack.conf") == 1 ]] && [[ $(stat -c %s $OUT2/site.bin) -lt $(stat -c %s $OUT/site.bin) ]] && echo ok)"
+# An image folder may be imported, so its metadata must never be executed as shell code.
+OUT5=$(mktemp -d "${TMPDIR:-/tmp}/k18-packconf.XXXXXX")
+printf '$(touch %s/ran)\n' "$OUT5" > "$OUT5/pack.conf"
+R=$(./k18 renew 192.0.2.1 "$OUT5" --force --dry-run 2>&1)
+check "hostile pack.conf is rejected without executing it" "$([[ $? != 0 && ! -e $OUT5/ran && $R == *'invalid pack configuration'* ]] && echo ok)"
+rm -rf "$OUT5"
 # --grub: a server whose ssh answers, but with other host keys than the ones we know for its address, is not reset
 mkdir -p $OUT/bin
 printf '#!/bin/sh\necho "@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @" >&2\necho "Host key verification failed." >&2\nexit 255\n' > $OUT/bin/ssh
