@@ -49,6 +49,8 @@ jobs:
         run: make ct
       - name: Fuzz TLS 1.3 protocol handling
         run: sudo unshare -n -- tools/tlsfuzz.sh
+      - name: Reject malformed ClientHello extension vector lengths
+        run: sudo unshare -n -- ./tap.sh python3 tools/hellofuzz.py 0 7
       - name: Check TCP acknowledgement and pipelining cases
         run: sudo unshare -n -- ./tap.sh python3 tools/acktest.py
       - name: Check transfers with loss and packet reordering
