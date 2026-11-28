@@ -91,6 +91,41 @@ def real():
     return got.startswith(b"HTTP/1.1 200")
 
 
+def wrong_extension_vector(rec, delta):
+    """Change only the ClientHello extensions vector length, leaving message lengths intact."""
+    packet = bytearray(rec)
+    msg = packet[5:]
+    if len(msg) < 44 or msg[0] != 1:
+        raise ValueError("not a complete ClientHello")
+    at = 4 + 2 + 32
+    at += 1 + msg[at]                         # session ID
+    suites = int.from_bytes(msg[at:at + 2], "big")
+    at += 2 + suites
+    at += 1 + msg[at]                         # compression methods
+    if at + 2 > len(msg):
+        raise ValueError("ClientHello has no extensions length")
+    length = int.from_bytes(msg[at:at + 2], "big")
+    if at + 2 + length != len(msg) or not 0 <= length + delta <= 0xFFFF:
+        raise ValueError("unexpected ClientHello layout")
+    packet[5 + at:7 + at] = (length + delta).to_bytes(2, "big")
+    return bytes(packet)
+
+
+def accepts_bad_extension_vector(rec, delta):
+    """Whether the server sends a ServerHello for a malformed extension vector."""
+    s = socket.create_connection((HOST, PORT), timeout=5, source_address=(SRC, 0))
+    s.settimeout(1)
+    try:
+        s.sendall(wrong_extension_vector(rec, delta))
+        try:
+            reply = s.recv(8192)
+        except socket.timeout:
+            reply = b""
+        return reply.startswith(b"\x16"), reply
+    finally:
+        s.close()
+
+
 def alive():
     pid = os.environ.get("QEMU_PID")
     return not pid or os.path.exists("/proc/%s" % pid)
@@ -100,6 +135,13 @@ def main():
     rng = random.Random(SEED)
     print("seed %d, %d ClientHellos" % (SEED, N), flush=True)
     base = [hello(), hello("X25519"), hello("prime256v1")]      # (two key shares, ours alone, one that is not ours)
+    for delta in (-1, 1):
+        accepted, reply = accepts_bad_extension_vector(base[0], delta)
+        if accepted:
+            print("FAIL: accepted a ClientHello whose extensions length differs by %+d byte(s)" % delta)
+            return 1
+        print("ok: extensions length %+d byte(s): no ServerHello (%s)" %
+              (delta, "alert" if reply.startswith(b"\x15") else "closed or ignored"), flush=True)
     said = collections.Counter()
     t0 = time.time()
     for i in range(N):
