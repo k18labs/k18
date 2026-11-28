@@ -91,7 +91,7 @@ handshake timing, or image size.
 
 ## 5. Measure TCP recovery on high-latency lossy paths
 
-**Status: 128 KiB post-loss flight cap tested in two baseline and two candidate GitHub Actions CI runs; candidate PR pending.**
+**Status: 128 KiB post-loss flight cap merged in PR #39. A 256 KiB trial regressed lossy and reordering cases and was not retained.**
 
 At 20 Mbit/s, a 2,000-packet queue, and 100 ms round-trip time, a 6 MiB download took
 5.94 seconds without loss and 34.06/33.88 seconds with deterministic 1% loss (`BSEED=7`)
@@ -114,6 +114,12 @@ drops. Linux client counters do not observe retransmissions from the k18 custom 
 use packet captures (CAP with tools/tl.py) for those. Compare CI timings across runs;
 trace which loss-recovery path accounts for the timeouts before changing retransmission,
 congestion-control, or pacing behavior. Keep full-file hash verification in every case.
+
+A one-run 256 KiB trial took 35.71 s at 100 ms RTT/1% loss and 16.14 s with queue-60
+reordering, versus 25.80 s and 8.82 s for the 128 KiB CI baseline. Its no-loss 100 ms
+control was unchanged at 5.89 s versus 5.94 s. The candidate's 1% loss queue-200 case
+also took 25.56 s versus 21.04 s. Given these regressions, the 256 KiB cap was discarded;
+the timing comparison is directional because CI loss is stochastic.
 
 A follow-up capture at the server TAP and client reproduced a 36.35 s lossy transfer with
 41 bottleneck drops; a captured no-loss control took 6.11 s with no drops. Both downloads
