@@ -131,8 +131,9 @@ build() {
   env -u HCLOUD_TOKEN -u SSH_KEY \
     P80="$6" HSTS="$7" CACHE="$8" HEADERS="$9" COMPRESS="${11:-1}" \
     make -s B="$5" SITE="$1" CERT="$4" NAME="$2" SAN="${10}" IP="$3" IP6="${12:-}" >/dev/null || return 1
-  printf 'site=%q\nname=%q\nip=%q\ncert=%q\np80=%q\nhsts=%q\ncache=%q\nheaders=%q\nsans=%q\ncompress=%q\nip6=%q\n' \
-    "$1" "$2" "$3" "$4" "$6" "$7" "$8" "$9" "${10}" "${11:-1}" "${12:-}" > "$5/pack.conf"
+  packconf "$5/pack.conf" \
+    site "$1" name "$2" ip "$3" cert "$4" p80 "$6" hsts "$7" cache "$8" \
+    headers "$9" sans "${10}" compress "${11:-1}" ip6 "${12:-}"
   chmod -R go= "$5" "$4"
   local total site_bytes name
   total=$(stat -c %s "$5/os.bin")
@@ -155,6 +156,64 @@ build() {
       echo "    (k18 renew --force gets one for all of: $2 ${10})" >&2
     fi
   fi
+}
+
+# pack.conf is data, never shell code: OUT can be an imported or modified artifact.
+# Each value is base64 so newlines in custom headers are preserved without quoting rules.
+packconf() {
+  local file=$1 key value
+  shift
+  : > "$file"
+  while (($#)); do
+    key=$1 value=$2
+    shift 2
+    printf '%s\t' "$key" >> "$file"
+    printf '%s' "$value" | base64 | tr -d '\n' >> "$file"
+    printf '\n' >> "$file"
+  done
+}
+
+load_packconf() {
+  local file=$1 key encoded decoded seen=' ' size
+  [[ -f $file ]] || die "no $file"
+  size=$(stat -c %s "$file")
+  ((size <= 1048576)) || die "invalid pack configuration: too large"
+  PACK_SITE= PACK_NAME= PACK_IP= PACK_CERT= PACK_P80= PACK_HSTS= PACK_CACHE=
+  PACK_HEADERS= PACK_SANS= PACK_COMPRESS= PACK_IP6=
+  while IFS=$'\t' read -r key encoded || [[ -n $key || -n $encoded ]]; do
+    case $key in
+      site|name|ip|cert|p80|hsts|cache|headers|sans|compress|ip6) ;;
+      *) die "invalid pack configuration: unknown field";;
+    esac
+    [[ $seen != *" $key "* ]] || die "invalid pack configuration: duplicate field"
+    [[ $encoded =~ ^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$ ]] ||
+      die "invalid pack configuration: malformed value"
+    decoded=$( { printf '%s' "$encoded" | base64 -d && printf .; } ) ||
+      die "invalid pack configuration: malformed value"
+    decoded=${decoded%.}
+    case $key in
+      site) PACK_SITE=$decoded;; name) PACK_NAME=$decoded;; ip) PACK_IP=$decoded;;
+      cert) PACK_CERT=$decoded;; p80) PACK_P80=$decoded;; hsts) PACK_HSTS=$decoded;;
+      cache) PACK_CACHE=$decoded;; headers) PACK_HEADERS=$decoded;; sans) PACK_SANS=$decoded;;
+      compress) PACK_COMPRESS=$decoded;; ip6) PACK_IP6=$decoded;;
+    esac
+    seen+="$key "
+  done < "$file"
+  for key in site name ip cert p80 hsts cache headers sans compress ip6; do
+    [[ $seen == *" $key "* ]] || die "invalid pack configuration: missing field"
+  done
+  # These values later become Make variables or shell arguments during renewal. A
+  # well-formed data file must not be able to turn them into Make or shell syntax.
+  [[ $PACK_SITE =~ ^[A-Za-z0-9_./-]+$ && $PACK_CERT =~ ^[A-Za-z0-9_./-]+$ ]] ||
+    die "invalid pack configuration: unsafe path"
+  [[ $PACK_NAME =~ ^[A-Za-z0-9.:_-]+$ ]] || die "invalid pack configuration: unsafe name"
+  [[ -z $PACK_IP || $PACK_IP =~ ^[0-9.]+$ ]] || die "invalid pack configuration: unsafe IPv4 address"
+  [[ -z $PACK_IP6 || $PACK_IP6 =~ ^[0-9A-Fa-f:.]+$ ]] || die "invalid pack configuration: unsafe IPv6 address"
+  [[ $PACK_P80 == page || $PACK_P80 == redirect ]] || die "invalid pack configuration: invalid port 80 mode"
+  [[ $PACK_HSTS =~ ^[0-9]*$ && $PACK_CACHE =~ ^[0-9]*$ ]] ||
+    die "invalid pack configuration: invalid cache lifetime"
+  [[ $PACK_COMPRESS == 0 || $PACK_COMPRESS == 1 ]] || die "invalid pack configuration: invalid compression setting"
+  [[ $PACK_SANS =~ ^[A-Za-z0-9.:_\ *-]*$ ]] || die "invalid pack configuration: unsafe subject name"
 }
 
 # What pack and publish are told about the image: the options, into these (the caller's)
@@ -564,7 +623,7 @@ sync
 nohup sh -c "sleep 1; systemctl reboot" >/dev/null 2>&1 &
 EOF
   local sans=
-  if [[ -f $out/pack.conf ]]; then sans=$(source "$out/pack.conf" && echo "${sans:-}"); fi
+  if [[ -f $out/pack.conf ]]; then load_packconf "$out/pack.conf"; sans=$PACK_SANS; fi
   up "$host" "$(cat "$out/name")" "${4:-$([[ -s $out/ca.pem ]] && echo "$out/ca.pem")}" "$sans" ||
     die "the server did not answer https://$(cat "$out/name")/ within two minutes. A reset brings Linux back."
 }
@@ -575,8 +634,9 @@ EOF
 raw() {
   local host=$1 out=$2 cert sans=
   [[ -f $out/pack.conf ]] || die "$out/pack.conf is not there (k18 pack makes it: it says where the key is that goes with the image)"
-  cert=$(source "$out/pack.conf" && echo "$cert")
-  sans=$(source "$out/pack.conf" && echo "${sans:-}")
+  load_packconf "$out/pack.conf"
+  cert=$PACK_CERT
+  sans=$PACK_SANS
   [[ -s $cert/server.key && -s $cert/server.pem ]] || die "$cert has no key and certificate (it is where $out/pack.conf says they are)"
   tmp
   rescue "$host" "$3" "$5"
@@ -629,8 +689,9 @@ renew() {
   [[ -f $out/pack.conf ]] || die "renew: $out/pack.conf is not there (k18 pack makes it: how the image is to be packed again)"
   [[ -z $grub || -z $rescuecmd$bootcmd$disk$first ]] || die "renew: --grub (and --reset) is one way, --rescue (and --boot, --disk, --first) the other"
   local site name ip cert p80 hsts cache headers sans= compress=1 ip6=
-  # shellcheck disable=SC1091
-  source "$out/pack.conf"
+  load_packconf "$out/pack.conf"
+  site=$PACK_SITE name=$PACK_NAME ip=$PACK_IP cert=$PACK_CERT p80=$PACK_P80 hsts=$PACK_HSTS
+  cache=$PACK_CACHE headers=$PACK_HEADERS sans=$PACK_SANS compress=$PACK_COMPRESS ip6=$PACK_IP6
   # Is it time? If not, this was all: nothing is reset, nobody is asked for anything.
   # (Also when the certificate lacks a name it was packed for: that is said, not acted
   # on, or a name that does not point here would cost a reset a day.)

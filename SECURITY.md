@@ -1,6 +1,12 @@
 # Security
 
-Report a problem by opening an issue at https://github.com/k18labs/k18/issues.
+## Reporting a vulnerability
+
+Please do not post suspected vulnerabilities, exploit steps, or proof-of-concept code in a public issue, pull request, or discussion. Report them through [GitHub's private vulnerability reporting form](https://github.com/k18labs/k18/security/advisories/new). Include the affected revision, impact, and steps to reproduce; avoid including real credentials or other people's data.
+
+If the private form is unavailable, contact a repository owner privately and ask for a secure reporting route. Do not use a public issue for vulnerability details.
+
+Maintainers should acknowledge reports privately, keep the reporter updated while investigating, and coordinate a fix and disclosure date with them. Publish a GitHub Security Advisory after a fix is available, unless the reporter and maintainers agree that a different timeline is safer.
 
 ## Credits
 

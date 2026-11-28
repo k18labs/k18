@@ -87,6 +87,28 @@ class SiteSymlinkTests(unittest.TestCase):
                 self.pack(f"{site}{os.sep}", out)
             self.assertFalse((out / "site.bin").exists())
 
+    def test_does_not_follow_parent_symlink_replaced_after_enumeration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            site, outside, out = root / "site", root / "outside", root / "out"
+            (site / "sub").mkdir(parents=True)
+            outside.mkdir()
+            out.mkdir()
+            (site / "sub" / "public.txt").write_text("public", encoding="utf-8")
+            (outside / "public.txt").write_text("synthetic secret", encoding="utf-8")
+            enumerate_site = pack.site_files
+
+            def replace_parent_after_enumeration(path):
+                result = enumerate_site(path)
+                (site / "sub").rename(site / "saved")
+                (site / "sub").symlink_to(outside, target_is_directory=True)
+                return result
+
+            with patch.object(pack, "site_files", side_effect=replace_parent_after_enumeration):
+                with self.assertRaisesRegex(SystemExit, "cannot safely open sub/public.txt"):
+                    self.pack(site, out)
+            self.assertFalse((out / "site.bin").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

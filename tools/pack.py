@@ -126,53 +126,110 @@ def content_type(name):
 
 
 def site_files(site):
-    """List regular site files, refusing links before the packer can follow them."""
+    """Return an open site-root fd and files reachable without following links."""
     site = os.path.normpath(site)
     try:
-        root_mode = os.lstat(site).st_mode
+        root_info = os.lstat(site)
     except OSError as exc:
         sys.exit(f"pack.py: cannot inspect site directory: {exc.strerror}")
+    root_mode = root_info.st_mode
     if stat.S_ISLNK(root_mode):
         sys.exit("pack.py: site directory must not be a symlink")
     if not stat.S_ISDIR(root_mode):
         sys.exit("pack.py: site path is not a directory")
+
+    if (not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY") or
+            os.open not in os.supports_dir_fd or os.scandir not in os.supports_fd):
+        sys.exit("pack.py: safe site traversal is not supported on this platform")
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        root_fd = os.open(site, dir_flags)
+    except OSError as exc:
+        sys.exit(f"pack.py: cannot safely open site directory: {exc.strerror}")
+    opened_root = os.fstat(root_fd)
+    if (not stat.S_ISDIR(opened_root.st_mode) or
+            (opened_root.st_dev, opened_root.st_ino) != (root_info.st_dev, root_info.st_ino)):
+        os.close(root_fd)
+        sys.exit("pack.py: site directory changed while opening it")
+
     files = []
-    for root, dirs, names in os.walk(site, followlinks=False):
-        for name in dirs + names:
-            path = os.path.join(root, name)
-            if os.path.islink(path):
-                rel = os.path.relpath(path, site).replace(os.sep, "/")
-                sys.exit(f"pack.py: {rel} must not be a symlink")
-        dirs[:] = sorted(d for d in dirs if not d.startswith(".") or d == ".well-known")
-        for name in sorted(names):
-            if not name.startswith("."):
-                files.append(os.path.join(root, name))
-    return files
+    def walk(directory_fd, parent=""):
+        try:
+            with os.scandir(directory_fd) as entries:
+                entries = sorted(entries, key=lambda entry: entry.name)
+        except OSError as exc:
+            sys.exit(f"pack.py: cannot safely inspect {parent or '.'}: {exc.strerror}")
+        subdirs, names = [], []
+        try:
+            for entry in entries:
+                rel = f"{parent}/{entry.name}" if parent else entry.name
+                try:
+                    entry_stat = entry.stat(follow_symlinks=False)
+                except OSError as exc:
+                    sys.exit(f"pack.py: cannot safely inspect {rel}: {exc.strerror}")
+                if stat.S_ISLNK(entry_stat.st_mode):
+                    sys.exit(f"pack.py: {rel} must not be a symlink")
+                if stat.S_ISDIR(entry_stat.st_mode):
+                    if entry.name.startswith(".") and entry.name != ".well-known":
+                        continue
+                    try:
+                        child_fd = os.open(entry.name, dir_flags, dir_fd=directory_fd)
+                    except OSError as exc:
+                        sys.exit(f"pack.py: cannot safely open {rel}: {exc.strerror}")
+                    child_stat = os.fstat(child_fd)
+                    if (not stat.S_ISDIR(child_stat.st_mode) or
+                            (child_stat.st_dev, child_stat.st_ino) != (entry_stat.st_dev, entry_stat.st_ino)):
+                        os.close(child_fd)
+                        sys.exit(f"pack.py: {rel} changed while opening it")
+                    subdirs.append((rel, child_fd))
+                elif not entry.name.startswith("."):
+                    names.append(rel)
+            files.extend(names)
+            for rel, child_fd in subdirs:
+                walk(child_fd, rel)
+        finally:
+            for _, child_fd in subdirs:
+                os.close(child_fd)
+
+    try:
+        walk(root_fd)
+    except BaseException:
+        os.close(root_fd)
+        raise
+    return root_fd, files
 
 
-def read_site_file(path, rel):
-    """Open only regular files and do not follow a final-component symlink."""
+def read_site_file(root_fd, rel):
+    """Read a regular file through descriptors rooted at the already-open site directory."""
+    parts = rel.split("/")
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        sys.exit(f"pack.py: invalid site path {rel}")
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.dup(root_fd)
     try:
-        mode = os.lstat(path).st_mode
-    except OSError as exc:
-        sys.exit(f"pack.py: cannot inspect {rel}: {exc.strerror}")
-    if not stat.S_ISREG(mode):
-        sys.exit(f"pack.py: {rel} is not a regular file")
-
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        for part in parts[:-1]:
+            try:
+                child_fd = os.open(part, dir_flags, dir_fd=fd)
+            except OSError as exc:
+                sys.exit(f"pack.py: cannot safely open {rel}: {exc.strerror}")
+            os.close(fd)
+            fd = child_fd
+        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+        try:
+            file_fd = os.open(parts[-1], flags, dir_fd=fd)
+        except OSError as exc:
+            sys.exit(f"pack.py: cannot safely open {rel}: {exc.strerror}")
+    finally:
+        os.close(fd)
     try:
-        fd = os.open(path, flags)
-    except OSError as exc:
-        sys.exit(f"pack.py: cannot safely open {rel}: {exc.strerror}")
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
             sys.exit(f"pack.py: {rel} is not a regular file")
-        with os.fdopen(fd, "rb") as f:
-            fd = -1
+        with os.fdopen(file_fd, "rb") as f:
+            file_fd = -1
             return f.read()
     finally:
-        if fd >= 0:
-            os.close(fd)
+        if file_fd >= 0:
+            os.close(file_fd)
 
 
 def main(site, out):
@@ -264,27 +321,29 @@ def main(site, out):
             saved[2] += min(len(data) for _, data in made)
         return n
     paths = {}          # request path -> response number
-    files = site_files(site)
+    root_fd, files = site_files(site)
     not_found = front = None
-    for path in files:
-        rel = os.path.relpath(path, site).replace(os.sep, "/")
-        body = read_site_file(path, rel)
-        if len(body) >= MAX_FILE:
-            sys.exit(f"pack.py: {rel} is too large (the limit is 1 GiB)")
-        url = "/" + quote(rel, safe="/~!$&'()*+,;=:@-._")
-        ctype = content_type(rel)
-        n = add_file(rel, ctype, body)
-        paths[url.encode()] = n
-        if rel == "index.html":
-            front = (ctype, body)
-        if rel == "404.html":
-            not_found = (ctype, body)
-        if os.path.basename(rel) == "index.html":
-            folder = url[:-len("index.html")]               # "/" or "/a/b/"
-            paths[folder.encode()] = n
-            if folder != "/":
-                head, _ = response(b"301 Moved Permanently", [b"Server: k18", b"Location: " + folder.encode()] + strict, b"")
-                paths.setdefault(folder[:-1].encode(), add(head, b""))
+    try:
+        for rel in files:
+            body = read_site_file(root_fd, rel)
+            if len(body) >= MAX_FILE:
+                sys.exit(f"pack.py: {rel} is too large (the limit is 1 GiB)")
+            url = "/" + quote(rel, safe="/~!$&'()*+,;=:@-._")
+            ctype = content_type(rel)
+            n = add_file(rel, ctype, body)
+            paths[url.encode()] = n
+            if rel == "index.html":
+                front = (ctype, body)
+            if rel == "404.html":
+                not_found = (ctype, body)
+            if os.path.basename(rel) == "index.html":
+                folder = url[:-len("index.html")]               # "/" or "/a/b/"
+                paths[folder.encode()] = n
+                if folder != "/":
+                    head, _ = response(b"301 Moved Permanently", [b"Server: k18", b"Location: " + folder.encode()] + strict, b"")
+                    paths.setdefault(folder[:-1].encode(), add(head, b""))
+    finally:
+        os.close(root_fd)
     ctype, body = not_found or ("text/plain; charset=utf-8", b"404 Not Found\n")
     a404 = add(*response(b"404 Not Found", [b"Server: k18", b"Content-Type: " + ctype.encode()] + kept, body))
     head, _ = response(b"405 Method Not Allowed", [b"Server: k18", b"Allow: GET, HEAD", b"Connection: close"] + strict, b"")
